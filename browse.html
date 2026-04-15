@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Browse all safety topics by category. Curated from OSHA, DOE, and NIOSH public-domain content.">
+  <title>Browse Topics — SafetyTopic</title>
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* ---- Browse-page specific styles ---- */
+    .browse-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 4px;
+    }
+
+    .search-wrap {
+      position: relative;
+      flex: 1;
+      min-width: 200px;
+    }
+
+    .search-icon {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--color-text-muted);
+      font-size: 0.95rem;
+      pointer-events: none;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 9px 12px 9px 34px;
+      border: 1.5px solid var(--color-border);
+      border-radius: var(--radius-sm);
+      font-size: 0.92rem;
+      font-family: var(--font-sans);
+      color: var(--color-text);
+      background: var(--color-surface);
+      transition: border-color var(--transition);
+    }
+    .search-input:focus {
+      outline: none;
+      border-color: var(--color-accent);
+      box-shadow: 0 0 0 3px var(--color-accent-light);
+    }
+    .search-input::placeholder { color: var(--color-text-muted); }
+
+    .browse-count {
+      font-size: 0.82rem;
+      color: var(--color-text-muted);
+      white-space: nowrap;
+    }
+
+    /* Category group */
+    .cat-group {
+      background: var(--color-surface);
+      border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
+    }
+
+    .cat-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      background: var(--color-bg);
+      border-bottom: 1px solid var(--color-border);
+    }
+
+    .cat-heading h2 {
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      color: var(--color-text-muted);
+      margin: 0;
+    }
+
+    .cat-count {
+      font-size: 0.75rem;
+      color: var(--color-text-muted);
+    }
+
+    /* Topic row */
+    .topic-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 20px;
+      border-bottom: 1px solid var(--color-border);
+      text-decoration: none;
+      color: var(--color-text);
+      transition: background var(--transition);
+      cursor: pointer;
+    }
+    .topic-row:last-child { border-bottom: none; }
+    .topic-row:hover {
+      background: var(--color-accent-light);
+      text-decoration: none;
+    }
+    .topic-row:hover .row-title { color: var(--color-accent); }
+
+    .row-badge { flex-shrink: 0; }
+
+    .row-title {
+      flex: 1;
+      font-size: 0.97rem;
+      font-weight: 600;
+      line-height: 1.35;
+      transition: color var(--transition);
+    }
+
+    .row-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .row-duration {
+      font-size: 0.78rem;
+      color: var(--color-text-muted);
+      white-space: nowrap;
+    }
+
+    .row-used {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--color-success);
+      white-space: nowrap;
+    }
+
+    .row-arrow {
+      color: var(--color-text-muted);
+      font-size: 0.85rem;
+      flex-shrink: 0;
+    }
+
+    /* Empty search state */
+    .no-results {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--color-text-muted);
+    }
+    .no-results h2 { font-size: 1.1rem; margin-bottom: 6px; }
+
+    /* Hide filtered groups */
+    .cat-group.hidden { display: none; }
+    .topic-row.hidden { display: none; }
+
+    @media (max-width: 600px) {
+      .row-duration { display: none; }
+      .row-meta { gap: 6px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="index.html" class="brand">
+        <span class="brand-mark" aria-hidden="true">✦</span>
+        <span class="brand-name">SafetyTopic</span>
+      </a>
+      <p class="tagline">Browse all topics</p>
+      <nav style="margin-left:auto">
+        <a href="index.html" class="btn btn-ghost" style="font-size:0.82rem;padding:6px 14px;color:#fff;border-color:rgba(255,255,255,0.35)">← Back to App</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="browse-controls">
+      <div class="search-wrap">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input
+          type="search"
+          id="search-input"
+          class="search-input"
+          placeholder="Search topics…"
+          aria-label="Search safety topics"
+          autocomplete="off"
+        >
+      </div>
+      <span class="browse-count" id="browse-count"></span>
+    </div>
+
+    <div id="topic-list" aria-live="polite">
+      <!-- Populated by browse.js -->
+    </div>
+
+    <div id="no-results" class="no-results" hidden>
+      <h2>No topics match your search</h2>
+      <p>Try a different keyword or clear the search.</p>
+    </div>
+  </main>
+
+  <footer class="site-footer">
+    <p>
+      Content curated from public-domain sources:
+      <a href="https://www.osha.gov" target="_blank" rel="noopener">OSHA</a>,
+      <a href="https://www.energy.gov/ehss" target="_blank" rel="noopener">DOE EHSS</a>,
+      and <a href="https://www.cdc.gov/niosh" target="_blank" rel="noopener">NIOSH</a>.
+      Always defer to your site-specific safety procedures.
+    </p>
+  </footer>
+
+  <script>
+    'use strict';
+
+    let usedTopics = {};
+    try {
+      const s = localStorage.getItem('usedTopics');
+      if (s) usedTopics = JSON.parse(s);
+    } catch (_) {}
+
+    function badgeClass(source) {
+      const s = (source || '').toUpperCase();
+      if (s.includes('OSHA'))  return 'badge badge-osha';
+      if (s.includes('DOE'))   return 'badge badge-doe';
+      if (s.includes('NIOSH')) return 'badge badge-niosh';
+      return 'badge badge-other';
+    }
+
+    function escHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    async function init() {
+      const listEl     = document.getElementById('topic-list');
+      const searchEl   = document.getElementById('search-input');
+      const countEl    = document.getElementById('browse-count');
+      const noResults  = document.getElementById('no-results');
+
+      let topics;
+      try {
+        const res = await fetch('topics.json');
+        if (!res.ok) throw new Error();
+        topics = await res.json();
+      } catch (_) {
+        listEl.innerHTML = '<p style="padding:40px;color:var(--color-text-muted)">Could not load topics.json.</p>';
+        return;
+      }
+
+      // Group by category (preserve order of first appearance)
+      const groups = {};
+      topics.forEach(t => {
+        if (!groups[t.category]) groups[t.category] = [];
+        groups[t.category].push(t);
+      });
+
+      // Render
+      Object.entries(groups).forEach(([cat, items]) => {
+        const group = document.createElement('div');
+        group.className = 'cat-group';
+        group.dataset.cat = cat;
+
+        group.innerHTML = `
+          <div class="cat-heading">
+            <h2>${escHtml(cat)}</h2>
+            <span class="cat-count">${items.length} topic${items.length !== 1 ? 's' : ''}</span>
+          </div>
+        `;
+
+        items.forEach(t => {
+          const useCount = usedTopics[t.id] || 0;
+          const row = document.createElement('a');
+          row.className = 'topic-row';
+          row.href = `index.html#${t.id}`;
+          row.dataset.title = t.title.toLowerCase();
+          row.dataset.summary = t.summary.toLowerCase();
+          row.innerHTML = `
+            <span class="row-badge ${badgeClass(t.source)}">${escHtml(t.source)}</span>
+            <span class="row-title">${escHtml(t.title)}</span>
+            <span class="row-meta">
+              ${useCount > 0 ? `<span class="row-used">✓ Used ${useCount}×</span>` : ''}
+              <span class="row-duration">${escHtml(t.duration)}</span>
+              <span class="row-arrow">→</span>
+            </span>
+          `;
+          group.appendChild(row);
+        });
+
+        listEl.appendChild(group);
+      });
+
+      updateCount(topics.length, topics.length);
+
+      // Search
+      searchEl.addEventListener('input', () => {
+        const q = searchEl.value.trim().toLowerCase();
+        let visible = 0;
+        const total = topics.length;
+
+        document.querySelectorAll('.cat-group').forEach(group => {
+          let groupVisible = 0;
+          group.querySelectorAll('.topic-row').forEach(row => {
+            const match = !q
+              || row.dataset.title.includes(q)
+              || row.dataset.summary.includes(q);
+            row.classList.toggle('hidden', !match);
+            if (match) groupVisible++;
+          });
+          group.classList.toggle('hidden', groupVisible === 0);
+          visible += groupVisible;
+        });
+
+        noResults.hidden = visible > 0;
+        updateCount(visible, total);
+      });
+
+      function updateCount(shown, total) {
+        countEl.textContent = shown === total
+          ? `${total} topics`
+          : `${shown} of ${total} topics`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
