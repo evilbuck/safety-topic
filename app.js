@@ -199,6 +199,7 @@ function showTopic(topic, updateHash) {
                    : useCount === 1 ? '✓ Used in 1 Meeting'
                    : `✓ Used in ${useCount} Meetings`;
   const usedClass  = useCount > 0 ? 'btn btn-used is-used' : 'btn btn-used';
+  const usedDisabled = useCount > 0 ? 'disabled' : '';
 
   const counterText = position !== -1
     ? `${position + 1} / ${catTopics.length}`
@@ -240,7 +241,7 @@ function showTopic(topic, updateHash) {
       <p class="topic-source-ref">Source: ${escHtml(topic.source)} — ${escHtml(topic.source_ref)}</p>
       <button id="use-this-btn" class="${usedClass}" type="button"
               aria-label="Mark this topic as used in a meeting"
-              aria-pressed="${useCount > 0}">
+              aria-pressed="${useCount > 0}" ${usedDisabled}>
         ${escHtml(usedLabel)}
       </button>
     </div>
@@ -255,12 +256,11 @@ function showTopic(topic, updateHash) {
   // Wire "I Used This"
   document.getElementById('use-this-btn').addEventListener('click', function () {
     markUsed(topic.id);
-    const count = usedTopics[topic.id];
-    const label = count === 1 ? '✓ Used in 1 Meeting' : `✓ Used in ${count} Meetings`;
-    this.textContent = label;
+    this.textContent = '✓ Used in 1 Meeting';
     this.classList.add('is-used');
     this.setAttribute('aria-pressed', 'true');
-    showToast(count === 1 ? '✓ Marked as used!' : `✓ Used ${count} times now`);
+    this.disabled = true;
+    showToast('✓ Marked as used!');
   });
 
   // Wire prev/next

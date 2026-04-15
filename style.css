@@ -394,6 +394,10 @@ a:hover { text-decoration: underline; }
 .btn-used.is-used:hover {
   background: #d9f0e3;
 }
+.btn-used:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
 
 /* ---------- Navigation Arrows ---------- */
 .topic-nav {
