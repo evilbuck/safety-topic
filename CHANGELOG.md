@@ -6,6 +6,16 @@ All notable bug fixes and improvements.
 
 ### Added
 
+- *Nothing yet*
+
+### Fixed
+
+- *Nothing yet*
+
+## [1.1.0] - 2026-04-16
+
+### Added
+
 - **Vitest test suite** — 34 tests covering all defensive functions; `window.__safetyTopic` harness added to app.js for test isolation.
 
 ### Fixed
