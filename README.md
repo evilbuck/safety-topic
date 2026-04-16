@@ -47,3 +47,9 @@ Just open `index.html` in a browser. No build step, no server required.
 ## Sources & disclaimer
 
 Content is curated and paraphrased from public-domain materials published by [OSHA](https://www.osha.gov), [DOE EHSS](https://www.energy.gov/ehss), and [NIOSH](https://www.cdc.gov/niosh). This tool is a convenience — **always defer to your site-specific safety procedures.**
+
+## Author
+
+Built by **Nathan Holbrook** — [LinkedIn](https://www.linkedin.com/in/nathan-holbrook-39a65233/) · [GitHub](https://github.com/alivegeek)
+
+Free to use.

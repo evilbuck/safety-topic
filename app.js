@@ -8,7 +8,7 @@
 'use strict';
 
 // ---------- State ----------
-let allTopics      = [];    // full dataset from topics.json
+let allTopics      = [];    // full dataset from topics-data.js
 let filteredTopics = [];    // current filtered set (by category / filter)
 let currentIndex   = 0;    // index within filteredTopics
 let seenIds        = new Set();
