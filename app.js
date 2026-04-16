@@ -7,6 +7,23 @@
 
 'use strict';
 
+// ---------- Clipboard Helper (Secure Context Fallback) ----------
+function copyToClipboard(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  // Fallback for file:// and non-secure contexts
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0;';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  try { document.execCommand('copy'); } catch (_) {}
+  document.body.removeChild(ta);
+  return Promise.resolve();
+}
+
 // ---------- State ----------
 let allTopics      = [];    // full dataset from topics-data.js
 let filteredTopics = [];    // current filtered set (by category / filter)
@@ -28,6 +45,11 @@ document.addEventListener('DOMContentLoaded', () => {
   printBtn       = document.getElementById('print-btn');
   toast          = document.getElementById('toast');
   brandLink      = document.getElementById('brand-link');
+
+  // Warn about file:// limitations
+  if (!window.isSecureContext) {
+    setTimeout(() => showToast('For full features, serve via HTTP: npx serve .'), 500);
+  }
 
   // Restore persisted state
   try {
@@ -303,14 +325,14 @@ function copyText() {
   if (topic.discussion_prompt) lines.push('', `Discussion: ${topic.discussion_prompt}`);
   lines.push('', `Source: ${topic.source} — ${topic.source_ref}`);
 
-  navigator.clipboard.writeText(lines.join('\n'))
+  copyToClipboard(lines.join('\n'))
     .then(() => showToast('✓ Text copied to clipboard'))
     .catch(() => showToast('Copy failed — try selecting the text manually'));
 }
 
 function copyLink() {
   const url = window.location.href.split('#')[0] + window.location.hash;
-  navigator.clipboard.writeText(url)
+  copyToClipboard(url)
     .then(() => showToast('✓ Link copied to clipboard'))
     .catch(() => showToast('Copy failed'));
 }

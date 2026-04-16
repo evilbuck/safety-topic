@@ -1,0 +1,8 @@
+{
+  "name": "safety-topic",
+  "version": "1.0.0",
+  "description": "Quick, credible safety briefs for meeting openers",
+  "scripts": {
+    "dev": "node --watch --watch-path . server.js"
+  }
+}
