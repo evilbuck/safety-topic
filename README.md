@@ -38,11 +38,57 @@ browse.html       # searchable full list
 app.js            # app logic
 style.css         # styles
 topics-data.js    # the topic library
+server.js         # lightweight dev server (optional)
 ```
 
-## Running locally
+## Development
 
-Just open `index.html` in a browser. No build step, no server required.
+### Quick start
+Open `index.html` directly in your browser. No build step required.
+
+### With dev server (recommended)
+
+Full clipboard and other secure context features require HTTP:
+
+```bash
+# Option 1: Built-in lightweight server
+npm run dev
+# Opens at http://localhost:3000
+# Watches all project files and restarts on changes
+
+# Option 1b: Direct (without npm)
+node --watch --watch-path . server.js
+
+# Option 2: Custom port
+node server.js 8080
+
+# Option 3: Serve (more features)
+npx serve .
+```
+
+> **Why a server?** Modern browsers restrict APIs like clipboard to "secure contexts" (HTTPS or localhost). Running from `file://` disables copy/paste functionality.
+
+### Adding new topics
+
+Edit `topics-data.js`. Each topic follows this structure:
+
+```javascript
+{
+  id: 'unique-slug',
+  title: 'Topic Title',
+  category: 'Safety Category',
+  source: 'OSHA',
+  source_ref: 'Publication title or URL',
+  duration: '1-2 min',
+  summary: 'Brief one-sentence summary.',
+  key_points: [
+    'Key point one',
+    'Key point two',
+  ],
+  stat: 'Optional: "Did you know?" statistic',
+  discussion_prompt: 'Optional: discussion question',
+}
+```
 
 ## Sources & disclaimer
 
