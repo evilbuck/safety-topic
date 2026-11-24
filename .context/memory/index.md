@@ -1,1 +1,3 @@
+- [2026-04-16.defensive-coding-app-js](.context/memory/2026-04-16.defensive-coding-app-js.md) — Defensive coding pass on app.js: 14 improvements, 34 Vitest tests, jsdom harness, filter persistence, debounce, schema validation
+- [safety-program-pulse-2026-11-24](.context/memory/safety-program-pulse-2026-11-24.md) — Safety Program Pulse: dashboard reading the meeting log (counts, recency cue, category coverage, recent, deterministic suggestion); 35 new tests (98 total); review iterate fixed 5 findings; verified live
 - [safety-meeting-log-2026-11-24](.context/memory/safety-meeting-log-2026-11-24.md) — Safety Talk Record: printable sign-off sheet + dated meeting log; 29 new tests (63 total); review iterate fixed 6 defects; verified in live Chromium
