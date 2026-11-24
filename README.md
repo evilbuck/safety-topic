@@ -15,6 +15,7 @@ Click **Get a Topic** and you get a concise, ready-to-read safety brief: a title
 - Remembers which topics you've used and when each was last delivered (local only) so you don't repeat
 - Shows a **Safety Program Pulse** — talk counts, days since your last recorded talk, per-category coverage, and a suggested next topic — so you can keep the program consistent instead of just picking blind
 - Produces a **Safety Program Report** — a printable, date-range-filtered summary of every recorded talk (delivery table plus per-category coverage), with a CSV export — the page you can hand to an inspector, GC, or HR when they ask what your program has covered
+- Browse with delivery status — the library page marks each topic **Never delivered** or **Last delivered** with a count, and a status select filters to never-delivered topics or sorts the library by neglect, so you pick the next talk knowing what your program has already covered
 
 ## Categories
 

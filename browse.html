@@ -193,6 +193,11 @@
         >
       </div>
       <span class="browse-count" id="browse-count"></span>
+      <select id="status-select" class="select status-select" aria-label="Filter topics by delivery status">
+        <option value="all">All topics</option>
+        <option value="never">Never delivered</option>
+        <option value="oldest">Oldest first</option>
+      </select>
     </div>
 
     <div id="topic-list" aria-live="polite">
@@ -221,14 +226,45 @@
   </footer>
 
   <script src="topics-data.js"></script>
+  <script src="delivery-data.js"></script>
   <script>
     'use strict';
 
+    /**
+     * Reads and parses one localStorage key defensively. localStorage may
+     * be unavailable (blocked, quota-disabled) or hold corrupt JSON: the
+     * failure is reported via console.warn and the fallback is returned,
+     * keeping the page fully functional.
+     * @param {string} key - localStorage key to read.
+     * @returns {*} Parsed value, or null when missing/unavailable/corrupt.
+     */
+    function readStoredJSON(key) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return null;
+        return JSON.parse(raw);
+      } catch (err) {
+        console.warn(`[SafetyTopic] Could not restore ${key} on the browse page:`, err);
+        return null;
+      }
+    }
+
+    // "I Used This" clicks (main page store). Plain-object values only;
+    // anything else is ignored with a warning rather than silently kept.
+    const storedUsed = readStoredJSON('usedTopics');
     let usedTopics = {};
-    try {
-      const s = localStorage.getItem('usedTopics');
-      if (s) usedTopics = JSON.parse(s);
-    } catch (_) {}
+    if (storedUsed && typeof storedUsed === 'object' && !Array.isArray(storedUsed)) {
+      usedTopics = storedUsed;
+    } else if (storedUsed) {
+      console.warn('[SafetyTopic] Ignoring stored usedTopics on the browse page: expected a plain object.');
+    }
+    // Logged sign-off deliveries. Arrays only; entries are sanitized by
+    // the delivery-data helpers, so no eager filtering is needed here.
+    const storedLog = readStoredJSON('meetingLog');
+    let meetingLog = Array.isArray(storedLog) ? storedLog : [];
+    if (storedLog !== null && !Array.isArray(storedLog)) {
+      console.warn('[SafetyTopic] Ignoring stored meetingLog on the browse page: expected an array.');
+    }
 
     function badgeClass(source) {
       const s = (source || '').toUpperCase();
@@ -251,6 +287,7 @@
       const searchEl   = document.getElementById('search-input');
       const countEl    = document.getElementById('browse-count');
       const noResults  = document.getElementById('no-results');
+      const statusEl   = document.getElementById('status-select');
 
       const topics = (typeof TOPICS !== 'undefined') ? TOPICS : [];
       if (!topics.length) {
@@ -263,31 +300,63 @@
       const heroSub = document.getElementById('hero-sub');
       if (heroSub) heroSub.textContent = `${topics.length} topics across ${catCount} categories — search by keyword or scroll by category.`;
 
-      // Group by category (preserve order of first appearance)
-      const groups = {};
+      // Delivery status (read-only join over the meetingLog store).
+      const deliveryIndex = buildDeliveryIndex(meetingLog, topics);
+      const categoryIndex = buildCategoryDeliveryIndex(meetingLog, topics);
+
+      /**
+       * Builds the row-meta delivery label(s) for one topic: a
+       * "Never delivered" marker for zero-log-entry ids, otherwise
+       * "Last delivered: YYYY-MM-DD" (omitted when the topic has no
+       * valid ISO-dated entry) plus "Delivered N×". Factual labels only.
+       * @param {string} topicId - Catalog topic id.
+       * @returns {string} HTML for the delivery status spans.
+       */
+      function deliveryStatusHtml(topicId) {
+        const status = deliveryIndex.get(topicId);
+        if (!status || status.neverDelivered) {
+          return '<span class="row-delivery row-delivery-never">Never delivered</span>';
+        }
+        let html = '';
+        if (status.lastDate) {
+          html += `<span class="row-delivery">Last delivered: ${escHtml(status.lastDate)}</span>`;
+        }
+        html += `<span class="row-delivery">Delivered ${status.count}×</span>`;
+        return html;
+      }
+
+      // Group by category (preserve order of first appearance), keeping
+      // row references so filtering can reorder rows without rebuilding.
+      const groupsData = [];
       topics.forEach(t => {
-        if (!groups[t.category]) groups[t.category] = [];
-        groups[t.category].push(t);
+        let g = groupsData.find(g => g.cat === t.category);
+        if (!g) {
+          g = { cat: t.category, topics: [], rows: [], groupEl: null };
+          groupsData.push(g);
+        }
+        g.topics.push(t);
       });
 
       // Render
-      Object.entries(groups).forEach(([cat, items]) => {
+      groupsData.forEach(g => {
         const group = document.createElement('div');
         group.className = 'cat-group';
-        group.dataset.cat = cat;
+        group.dataset.cat = g.cat;
+        g.groupEl = group;
 
         group.innerHTML = `
           <div class="cat-heading">
-            <h2>${escHtml(cat)}</h2>
-            <span class="cat-count">${items.length} topic${items.length !== 1 ? 's' : ''}</span>
+            <h2>${escHtml(g.cat)}</h2>
+            <span class="cat-count">${g.topics.length} topic${g.topics.length !== 1 ? 's' : ''}</span>
           </div>
         `;
 
-        items.forEach(t => {
+        g.topics.forEach(t => {
           const useCount = usedTopics[t.id] || 0;
           const row = document.createElement('a');
           row.className = 'topic-row';
           row.href = `index.html#${t.id}`;
+          row.dataset.topicId = t.id;
           row.dataset.title = t.title.toLowerCase();
           row.dataset.summary = t.summary.toLowerCase();
           row.innerHTML = `
@@ -295,40 +364,65 @@
             <span class="row-title">${escHtml(t.title)}</span>
             <span class="row-meta">
               ${useCount > 0 ? `<span class="row-used">✓ Used ${useCount}×</span>` : ''}
+              ${deliveryStatusHtml(t.id)}
               <span class="row-duration">${escHtml(t.duration)}</span>
               <span class="row-arrow">→</span>
             </span>
           `;
+          g.rows.push({ row, topic: t });
           group.appendChild(row);
         });
 
         listEl.appendChild(group);
       });
 
-      updateCount(topics.length, topics.length);
-
-      // Search
-      searchEl.addEventListener('input', () => {
-        const q = searchEl.value.trim().toLowerCase();
+      /**
+       * Applies keyword search × status select in one pass: orders rows
+       * and category groups (catalog order, or neglect order for
+       * "Oldest first"), toggles row/group visibility, and refreshes the
+       * result count. Deterministic: identical state → identical order.
+       * @returns {void}
+       */
+      function applyFilters() {
+        const q = (searchEl.value || '').trim().toLowerCase();
+        const mode = statusEl ? statusEl.value : 'all';
         let visible = 0;
         const total = topics.length;
 
-        document.querySelectorAll('.cat-group').forEach(group => {
+        const orderedGroups = mode === 'oldest'
+          ? [...groupsData].sort((g1, g2) => compareCategoryNeglect(g1.cat, g2.cat, categoryIndex))
+          : groupsData;
+
+        orderedGroups.forEach(g => {
+          const orderedRows = mode === 'oldest'
+            ? [...g.rows].sort((r1, r2) => compareTopicNeglect(r1.topic, r2.topic, deliveryIndex))
+            : g.rows;
           let groupVisible = 0;
-          group.querySelectorAll('.topic-row').forEach(row => {
-            const match = !q
-              || row.dataset.title.includes(q)
-              || row.dataset.summary.includes(q);
+          orderedRows.forEach(({ row }) => {
+            const status = deliveryIndex.get(row.dataset.topicId);
+            const statusOk = mode !== 'never' || !status || status.neverDelivered;
+            const match = statusOk
+              && (!q
+                || row.dataset.title.includes(q)
+                || row.dataset.summary.includes(q));
             row.classList.toggle('hidden', !match);
             if (match) groupVisible++;
+            g.groupEl.appendChild(row); // re-append to apply row order
           });
-          group.classList.toggle('hidden', groupVisible === 0);
+          g.groupEl.classList.toggle('hidden', groupVisible === 0);
           visible += groupVisible;
+          listEl.appendChild(g.groupEl); // re-append to apply group order
         });
 
         noResults.hidden = visible > 0;
         updateCount(visible, total);
-      });
+      }
+
+      // Search
+      searchEl.addEventListener('input', applyFilters);
+      if (statusEl) statusEl.addEventListener('change', applyFilters);
+
+      applyFilters();
 
       function updateCount(shown, total) {
         countEl.textContent = shown === total

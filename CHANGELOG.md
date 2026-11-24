@@ -11,6 +11,8 @@ All notable bug fixes and improvements.
 - **Safety Program Pulse** — new main-page dashboard that reads your recorded talk log: total and this-month talk counts, days since your last recorded talk (with a gentle informational cue past 30 days), a per-category delivered-vs-never coverage ledger (never-delivered categories first), a recent-deliveries list, and a deterministic "suggested next topic" (never-delivered first, most-neglected category) with a one-click Load button. Hidden from print output, like all app chrome.
 - **Safety Program Report** — new "Program Report" button in the Program Pulse opens a printable, date-range-filtered report of your recorded talk log: summary counts, a chronological delivery table (Date · Topic · Category), a per-category coverage summary, and an honest footer pointing to your filed Safety Talk Records for attendance names and signatures. Range presets (This month / This quarter / This year / All time) plus custom from/to dates; printing shows only the report. A "Download CSV" button exports the same history as RFC 4180 CSV (BOM + CRLF, Excel-ready) via a temporary object URL that is always revoked.
 - **51 new Vitest tests** (149 total) covering the report builder (preset/custom range math, quarter boundaries, malformed-date exclusion, unknown-topic fallbacks), CSV formatting, overlay wiring, print isolation, and the review-found regression paths.
+- **Delivery-aware Browse page** — every topic row now shows its delivery status from the recorded talk log: a "Never delivered" marker for topics with no log entries, or "Last delivered: <date>" plus a delivered count. A new status select (All topics / Never delivered / Oldest first) filters to the never-delivered topics or reorders the library by neglect (never-delivered first, then oldest-delivered dates), composing with keyword search and category grouping — the digital equivalent of Cal/OSHA's tailgate worksheet (topic grid + date cells) at the moment you pick the next talk. Delivered by a new dependency-free `delivery-data.js` shared helper.
+- **48 new Vitest tests** (197 total) covering the delivery index (counts, last dates, malformed/unknown handling, non-mutation), neglect comparators and `suggestNextTopic` consistency, status select composition, and defensive localStorage reads.
 
 ### Fixed
 
@@ -23,6 +25,7 @@ All notable bug fixes and improvements.
 - **Changing the report range dropped keyboard focus to the page body** — range controls now stay mounted; only the report body re-renders, so the select/date input you changed keeps focus.
 - **"I Used This" rebuilt the hidden report overlay on every click** — the report now re-renders only while it is actually open, and stays cleared after Close.
 - **CSV export could leave a stray anchor in the DOM if the download click failed** — cleanup now runs on every path.
+- **Browse page silently swallowed localStorage restore errors** — the `usedTopics` read ended in a silent `catch (_) {}` (the exact anti-pattern the defensive-coding pass removed from `app.js`), and shape-mismatched stored values fell back without any warning. All browse-page localStorage reads now warn descriptively on corrupt JSON, wrong-shape values, and unavailable storage, and the page stays fully functional without localStorage.
 
 ## [1.1.0] - 2026-04-16
 

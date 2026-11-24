@@ -556,6 +556,26 @@ a:hover { text-decoration: underline; }
 }
 .state-empty h2 { font-size: 1.2rem; margin-bottom: 8px; }
 
+/* ---------- Browse delivery status ---------- */
+/* Width fix: .select is grid-sized on the main page; the browse
+   controls are a flex row. */
+.status-select {
+  width: auto;
+  min-width: 150px;
+}
+
+.row-delivery {
+  font-size: 0.72rem;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.row-delivery-never {
+  color: #8a3f00; /* safety orange, 7.5:1 on white — mirrors .pulse-cat-never (WCAG AA) */
+  font-weight: 600;
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 600px) {
   .topic-card { padding: 24px 20px; }
