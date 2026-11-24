@@ -6,11 +6,13 @@ All notable bug fixes and improvements.
 
 ### Added
 
-- *Nothing yet*
+- **Printable Sign-Off Sheet** — new share-bar button prints a one-page Safety Talk Record: the topic brief plus date, presenter/location/company fill-in lines, an attestation line, 12 attendance signature rows, notes/follow-up space, and a presenter sign-off line — the fields conventional toolbox-talk records use.
+- **Dated meeting log** — "I Used This" now also records a dated entry in localStorage (`meetingLog`), and the topic card shows "Last delivered: <date>". Used-count labels and the "Not used yet" filter are unchanged.
+- **29 new Vitest tests** (63 total) covering the sign-off sheet content, meeting log persistence, print flow, last-delivered display, and defensive restore paths.
 
 ### Fixed
 
-- *Nothing yet*
+- **`init()` silently swallowed localStorage restore errors** — the `seenTopics`/`usedTopics` restores (and the `topicFilter` restore in `restoreFilterState()`) used `catch (_) {}`, contradicting the defensive-coding rule; all restores now warn instead of swallowing.
 
 ## [1.1.0] - 2026-04-16
 

@@ -64,6 +64,8 @@ let currentIndex = 0;
 let seenIds = new Set();
 /** @type {Record<string, number>} */
 let usedTopics = {};
+/** @type {{ topicId: string, date: string }[]} */
+let meetingLog = [];
 
 // ---------- DOM refs ----------
 /** @type {HTMLElement | null} */
@@ -82,6 +84,10 @@ let printBtn;
 let toast;
 /** @type {HTMLElement | null} */
 let brandLink;
+/** @type {HTMLElement | null} */
+let signoffSheet;
+/** @type {HTMLButtonElement | null} */
+let signoffBtn;
 
 /**
  * Initializes the app: wires DOM refs, restores persisted state,
@@ -107,6 +113,8 @@ function assertDomElements() {
     'print-btn',
     'toast',
     'brand-link',
+    'signoff-sheet',
+    'signoff-btn',
   ];
   for (const id of required) {
     const el =
@@ -165,6 +173,8 @@ function init() {
   printBtn = document.getElementById("print-btn");
   toast = document.getElementById("toast");
   brandLink = document.getElementById("brand-link");
+  signoffSheet = document.getElementById("signoff-sheet");
+  signoffBtn = document.getElementById("signoff-btn");
 
   // Fail fast: catch missing DOM elements before any other code runs
   assertDomElements();
@@ -173,11 +183,34 @@ function init() {
   try {
     const stored = localStorage.getItem("seenTopics");
     if (stored) seenIds = new Set(JSON.parse(stored));
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[SafetyTopic] Could not restore seen topics:", err);
+  }
   try {
     const stored = localStorage.getItem("usedTopics");
     if (stored) usedTopics = JSON.parse(stored);
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[SafetyTopic] Could not restore used topics:", err);
+  }
+  try {
+    const stored = localStorage.getItem("meetingLog");
+    if (stored) meetingLog = JSON.parse(stored);
+    if (!Array.isArray(meetingLog)) meetingLog = [];
+    // Sanitize restored entries: malformed shapes would throw inside
+    // showTopic() after its isRendering guard latches (wedge bug).
+    const validEntries = meetingLog.filter(
+      (e) => e && typeof e.topicId === "string" && typeof e.date === "string",
+    );
+    if (validEntries.length !== meetingLog.length) {
+      console.warn(
+        `[SafetyTopic] Dropped ${meetingLog.length - validEntries.length} malformed meeting log entr${meetingLog.length - validEntries.length === 1 ? "y" : "ies"}`,
+      );
+    }
+    meetingLog = validEntries;
+  } catch (err) {
+    console.warn("[SafetyTopic] Could not restore meeting log:", err);
+    meetingLog = [];
+  }
 
   // Load topics from inline data (topics-data.js)
   if (typeof TOPICS === "undefined" || !TOPICS.length) {
@@ -246,7 +279,8 @@ function buildCategoryDropdown() {
 /**
  * Attaches event listeners to all interactive controls:
  * new-topic button, category select, copy-text, copy-link, print,
- * brand link, and hashchange (deep-link) events.
+ * sign-off button, window afterprint (sign-off sheet close), brand
+ * link, and hashchange (deep-link) events.
  */
 function wireEvents() {
   newTopicBtn.addEventListener("click", () => {
@@ -263,7 +297,16 @@ function wireEvents() {
 
   copyTextBtn.addEventListener("click", copyText);
   copyLinkBtn.addEventListener("click", copyLink);
-  printBtn.addEventListener("click", () => window.print());
+  printBtn.addEventListener("click", () => {
+    // Never print the stale sign-off sheet via the main print button.
+    closeSignoffSheet();
+    window.print();
+  });
+  signoffBtn.addEventListener("click", openSignoffSheet);
+
+  // addEventListener dedupes identical function references, so repeated
+  // wireEvents calls (tests) cannot stack this listener.
+  window.addEventListener("afterprint", closeSignoffSheet);
 
   brandLink.addEventListener("click", (e) => {
     e.preventDefault();
@@ -371,7 +414,9 @@ function restoreFilterState() {
         rebuildFiltered();
       }
     }
-  } catch (_) {}
+  } catch (err) {
+    console.warn("[SafetyTopic] Could not restore saved category filter:", err);
+  }
 }
 
 // ---------- Topic Selection ----------
@@ -434,6 +479,138 @@ function markUsed(id) {
   }
 }
 
+// ---------- Safety Talk Record ----------
+/**
+ * Returns today's date as a local ISO-formatted string (YYYY-MM-DD),
+ * suitable for prefilling the sign-off sheet Date field.
+ * @returns {string} Today's date, e.g. "2026-11-24".
+ */
+function todayISO() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Appends a dated entry ({ topicId, date }) to the meeting log and
+ * persists it to localStorage under the `meetingLog` key. Never
+ * throws: storage failures are reported via console.warn and the
+ * in-memory log is still updated.
+ * @param {string} topicId - The ID of the delivered topic.
+ */
+function logTalk(topicId) {
+  meetingLog.push({ topicId, date: todayISO() });
+  try {
+    localStorage.setItem("meetingLog", JSON.stringify(meetingLog));
+  } catch (err) {
+    console.warn("[SafetyTopic] Could not persist meeting log:", err);
+  }
+}
+
+/**
+ * Builds the printable Safety Talk Record (sign-off sheet) HTML for a
+ * topic: brief header (title, summary, key points, optional
+ * stat/discussion, source, duration), prefilled Date, blank
+ * Presented by / Location / Company fill-in lines, attestation, a
+ * 12-row attendance table, notes area, and presenter signature line.
+ * All topic-derived strings pass through escHtml().
+ * @param {Topic | null | undefined} topic - The topic to build a record for.
+ * @returns {string} The sheet HTML, or "" when no topic is given.
+ */
+function buildSignoffSheet(topic) {
+  if (!topic) return "";
+  const date = todayISO();
+
+  const statBlock = topic.stat
+    ? `<div class="signoff-stat"><strong>Did You Know?</strong> ${escHtml(topic.stat)}</div>`
+    : "";
+  const discussionBlock = topic.discussion_prompt
+    ? `<div class="signoff-discussion"><strong>Discussion:</strong> ${escHtml(topic.discussion_prompt)}</div>`
+    : "";
+
+  const attendanceRows = Array.from({ length: 12 }, () =>
+    `<tr><td class="signoff-cell"></td><td class="signoff-cell"></td></tr>`,
+  ).join("");
+
+  return `
+    <div class="signoff-header">
+      <h2 class="signoff-title">Safety Talk Record</h2>
+      <p class="signoff-topic-title">${escHtml(topic.title)}</p>
+      <p class="signoff-summary">${escHtml(topic.summary)}</p>
+      <ul class="signoff-points">
+        ${topic.key_points.map((pt) => `<li>${escHtml(pt)}</li>`).join("")}
+      </ul>
+      ${statBlock}
+      ${discussionBlock}
+      <p class="signoff-source">Source: ${escHtml(topic.source)} — ${escHtml(topic.source_ref)} · Duration: ${escHtml(topic.duration)}</p>
+    </div>
+
+    <div class="signoff-fields">
+      <p class="signoff-field"><strong>Date:</strong> ${escHtml(date)}</p>
+      <p class="signoff-field"><strong>Presented by</strong> <span class="signoff-blank"></span></p>
+      <p class="signoff-field"><strong>Location / Crew</strong> <span class="signoff-blank"></span></p>
+      <p class="signoff-field"><strong>Company</strong> <span class="signoff-blank"></span></p>
+    </div>
+
+    <p class="signoff-attestation">By signing below, I confirm I attended this safety talk and understood its content.</p>
+
+    <table class="signoff-table">
+      <thead>
+        <tr><th>Name (print)</th><th>Signature</th></tr>
+      </thead>
+      <tbody>
+        ${attendanceRows}
+      </tbody>
+    </table>
+
+    <div class="signoff-notes">
+      <p class="signoff-section-label">Notes / follow-up actions</p>
+      <p class="signoff-blank"></p>
+      <p class="signoff-blank"></p>
+      <p class="signoff-blank"></p>
+    </div>
+
+    <p class="signoff-presenter-sign"><strong>Presenter signature</strong> <span class="signoff-blank"></span> <strong>Date</strong> <span class="signoff-blank"></span></p>
+  `;
+}
+
+/**
+ * Opens the sign-off sheet for the currently loaded topic: renders it
+ * into #signoff-sheet, adds body.sheet-open (print mode), and calls
+ * window.print() when available. With no topic loaded, shows an error
+ * toast and does nothing else. When window.print is unavailable, the
+ * sheet stays visible on screen with an info toast instead.
+ */
+function openSignoffSheet() {
+  const topic = currentTopic();
+  if (!topic) {
+    showToast("No topic loaded — load a topic first");
+    return;
+  }
+  if (!signoffSheet) {
+    signoffSheet = document.getElementById("signoff-sheet");
+    if (!signoffSheet) return;
+  }
+  signoffSheet.innerHTML = buildSignoffSheet(topic);
+  document.body.classList.add("sheet-open");
+  if (typeof window.print === "function") {
+    window.print();
+  } else {
+    showToast("Sign-off sheet shown on screen — print from your browser menu");
+  }
+}
+
+/**
+ * Closes the sign-off sheet: removes body.sheet-open and clears the
+ * rendered sheet. Bound to the window afterprint event.
+ */
+function closeSignoffSheet() {
+  document.body.classList.remove("sheet-open");
+  if (signoffSheet) signoffSheet.innerHTML = "";
+}
+
 // ---------- Render ----------
 /**
  * Renders a topic card into the DOM, including title, summary, key
@@ -447,6 +624,9 @@ function showTopic(topic, updateHash) {
   // Debounce: ignore concurrent calls (e.g. from rapid button clicks)
   if (isRendering) return;
   isRendering = true;
+
+  // Clear any stale sheet-open state so a later print prints the card.
+  closeSignoffSheet();
 
   // Track that we've seen this topic
   (window.markSeen ?? markSeen)(topic.id);
@@ -472,6 +652,15 @@ function showTopic(topic, updateHash) {
 
   const counterText =
     position !== -1 ? `${position + 1} / ${catTopics.length}` : "";
+
+  const lastDelivered = meetingLog
+    .filter((e) => e.topicId === topic.id)
+    .map((e) => e.date)
+    .sort()
+    .pop();
+  const lastDeliveredHtml = lastDelivered
+    ? `<p class="topic-last-delivered">Last delivered: ${escHtml(lastDelivered)}</p>`
+    : "";
 
   topicCard.innerHTML = `
     <div class="topic-header">
@@ -515,6 +704,7 @@ function showTopic(topic, updateHash) {
 
     <div class="topic-card-footer">
       <p class="topic-source-ref">Source: ${escHtml(topic.source)} — ${escHtml(topic.source_ref)}</p>
+      ${lastDeliveredHtml}
       <button id="use-this-btn" class="${usedClass}" type="button"
               aria-label="Mark this topic as used in a meeting"
               aria-pressed="${useCount > 0}" ${usedDisabled}>
@@ -534,10 +724,22 @@ function showTopic(topic, updateHash) {
   if (useThisBtn) {
     useThisBtn.addEventListener("click", function () {
       markUsed(topic.id);
+      logTalk(topic.id);
       this.textContent = "✓ Used in 1 Meeting";
       this.classList.add("is-used");
       this.setAttribute("aria-pressed", "true");
       this.disabled = true;
+      // Keep the card in sync with meetingLog without a re-render.
+      const footer = topicCard && topicCard.querySelector(".topic-card-footer");
+      if (footer) {
+        let line = footer.querySelector(".topic-last-delivered");
+        if (!line) {
+          line = document.createElement("p");
+          line.className = "topic-last-delivered";
+          footer.insertBefore(line, this);
+        }
+        line.textContent = `Last delivered: ${todayISO()}`;
+      }
       showToast("✓ Marked as used!");
     });
   }
@@ -693,7 +895,9 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
     currentIndex = overrides.currentIndex ?? 0;
     seenIds = overrides.seenIds ?? new Set();
     usedTopics = overrides.usedTopics ?? {};
+    meetingLog = overrides.meetingLog ?? [];
     isRendering = false;
+    closeSignoffSheet();
   };
 
   /**
@@ -713,6 +917,8 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
     printBtn = null;
     toast = null;
     brandLink = null;
+    signoffSheet = null;
+    signoffBtn = null;
   };
 
   /**
@@ -739,6 +945,8 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
     printBtn = document.getElementById("print-btn");
     toast = document.getElementById("toast");
     brandLink = document.getElementById("brand-link");
+    signoffSheet = document.getElementById("signoff-sheet");
+    signoffBtn = document.getElementById("signoff-btn");
     wireEvents();
     // Build dropdown here for production (allTopics is already populated).
     // Tests that seed topics via sft.reset() should call callInit() first,
@@ -758,6 +966,7 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
     currentIndex,
     seenIds: new Set(seenIds),
     usedTopics: { ...usedTopics },
+    meetingLog: meetingLog.map((e) => ({ ...e })),
   });
 
   // Expose render/navigation functions for test coverage
@@ -769,6 +978,9 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
   window.__safetyTopic.restoreFilterState = restoreFilterState;
   window.__safetyTopic.getCategorySelect = () => categorySelect;
   window.__safetyTopic.isRendering = () => isRendering;
+  window.__safetyTopic.buildSignoffSheet = buildSignoffSheet;
+  window.__safetyTopic.logTalk = logTalk;
+  window.__safetyTopic.getMeetingLog = () => meetingLog.map((e) => ({ ...e }));
 
   // Seed initial state so pickRandom etc. have a sane starting point
   window.__safetyTopic.reset();

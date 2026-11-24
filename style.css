@@ -427,6 +427,13 @@ a:hover { text-decoration: underline; }
   min-width: 0;
 }
 
+/* Last delivered date */
+.topic-last-delivered {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
 /* "I Used This" button */
 .btn-used {
   background: var(--color-surface);
@@ -560,6 +567,105 @@ a:hover { text-decoration: underline; }
   .controls { gap: 10px; }
 }
 
+/* ---------- Safety Talk Record (sign-off sheet) ---------- */
+.signoff-sheet {
+  display: none;
+  background: #fff;
+  color: #000;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 20px 24px;
+}
+
+body.sheet-open .signoff-sheet {
+  display: block;
+}
+
+.signoff-sheet .signoff-title {
+  font-size: 18pt;
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+.signoff-sheet .signoff-topic-title {
+  font-size: 14pt;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+
+.signoff-sheet .signoff-summary {
+  margin: 0 0 8px;
+}
+
+.signoff-sheet .signoff-points {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.signoff-sheet .signoff-stat,
+.signoff-sheet .signoff-discussion {
+  margin: 0 0 8px;
+  font-size: 10pt;
+}
+
+.signoff-sheet .signoff-source {
+  font-size: 9pt;
+  color: #444;
+  margin: 0 0 12px;
+}
+
+.signoff-sheet .signoff-fields {
+  margin: 0 0 10px;
+}
+
+.signoff-sheet .signoff-field {
+  margin: 6px 0;
+}
+
+.signoff-sheet .signoff-blank {
+  display: inline-block;
+  min-width: 220px;
+  border-bottom: 1px solid #000;
+}
+
+.signoff-sheet p.signoff-blank {
+  display: block;
+  height: 1.4em;
+  margin: 10px 0 0;
+}
+
+.signoff-sheet .signoff-attestation {
+  font-size: 10pt;
+  font-style: italic;
+  margin: 10px 0;
+}
+
+.signoff-sheet .signoff-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 10px 0 14px;
+}
+
+.signoff-sheet .signoff-table th,
+.signoff-sheet .signoff-table td {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.signoff-sheet .signoff-table td.signoff-cell {
+  height: 22px;
+}
+
+.signoff-sheet .signoff-section-label {
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.signoff-sheet .signoff-presenter-sign {
+  margin-top: 14px;
+}
+
 /* ---------- Print Styles ---------- */
 @media print {
   body { background: #fff; font-size: 11pt; }
@@ -584,6 +690,7 @@ a:hover { text-decoration: underline; }
 
   .topic-card-footer { border-top: 1px solid #ccc; padding-top: 4px; }
   .topic-source-ref  { font-size: 9pt; }
+  .topic-last-delivered { font-size: 9pt; }
 
   .container { padding: 20px 0; gap: 16px; }
 
@@ -618,4 +725,26 @@ a:hover { text-decoration: underline; }
   .badge-niosh  { border: 1px solid #1a7a4a; }
 
   .toast { display: none; }
+
+  /* Sign-off sheet print mode: sheet only, one page */
+  body.sheet-open .site-header,
+  body.sheet-open .controls,
+  body.sheet-open .topic-card,
+  body.sheet-open .share-bar,
+  body.sheet-open .site-footer,
+  body.sheet-open .toast {
+    display: none !important;
+  }
+
+  body.sheet-open .signoff-sheet {
+    display: block;
+    border: none;
+    padding: 0;
+    break-inside: avoid;
+    font-size: 10.5pt;
+  }
+
+  body.sheet-open .signoff-table td.signoff-cell {
+    height: 24px;
+  }
 }

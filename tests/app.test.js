@@ -402,3 +402,401 @@ describe('filter state persistence', () => {
     expect(select.value).toBe('');
   });
 });
+
+// ---------- Safety Talk Record (sign-off sheet + meeting log) ----------
+
+describe('buildSignoffSheet', () => {
+  const baseTopic = {
+    id: 'sheet-1',
+    title: 'Ladder Safety',
+    category: 'General',
+    source: 'OSHA',
+    source_ref: 'OSHA 1926.1053',
+    duration: '5 min',
+    summary: 'How to use ladders safely.',
+    key_points: ['Three points of contact', 'Inspect before use'],
+  };
+
+  it('includes title, summary, key points, source, duration, and attestation', () => {
+    const html = win.buildSignoffSheet(baseTopic);
+    expect(html).toContain('Ladder Safety');
+    expect(html).toContain('How to use ladders safely.');
+    expect(html).toContain('Three points of contact');
+    expect(html).toContain('OSHA 1926.1053');
+    expect(html).toContain('5 min');
+    expect(html).toContain('By signing below, I confirm I attended this safety talk');
+  });
+
+  it('includes presenter, location/crew, and company labels', () => {
+    const html = win.buildSignoffSheet(baseTopic);
+    expect(html).toContain('Presented by');
+    expect(html).toContain('Location / Crew');
+    expect(html).toContain('Company');
+  });
+
+  it('includes exactly 12 attendance rows with Name and Signature columns', () => {
+    const html = win.buildSignoffSheet(baseTopic);
+    expect(html).toContain('Name (print)');
+    expect(html).toContain('Signature');
+    // Count table body rows: exactly 12 <tr> inside <tbody>
+    const tbody = html.slice(html.indexOf('<tbody>'), html.indexOf('</tbody>'));
+    expect((tbody.match(/<tr>/g) || []).length).toBe(12);
+  });
+
+  it('prefills today\'s date as an ISO date', () => {
+    const html = win.buildSignoffSheet(baseTopic);
+    const m = html.match(/\b(\d{4}-\d{2}-\d{2})\b/);
+    expect(m).not.toBeNull();
+    // The prefilled date must be an actual calendar date (parsable)
+    expect(Number.isNaN(Date.parse(m[1]))).toBe(false);
+  });
+
+  it('includes notes area and presenter signature line', () => {
+    const html = win.buildSignoffSheet(baseTopic);
+    expect(html).toContain('Notes / follow-up actions');
+    expect(html).toContain('Presenter signature');
+  });
+
+  it('omits stat and discussion blocks when the topic lacks them', () => {
+    const html = win.buildSignoffSheet(baseTopic);
+    expect(html).not.toContain('Did You Know?');
+    expect(html).not.toContain('Discussion');
+  });
+
+  it('includes stat and discussion blocks when present', () => {
+    const html = win.buildSignoffSheet({
+      ...baseTopic,
+      stat: 'Falls are a leading cause of deaths.',
+      discussion_prompt: 'When did you last inspect a ladder?',
+    });
+    expect(html).toContain('Did You Know?');
+    expect(html).toContain('Falls are a leading cause of deaths.');
+    expect(html).toContain('When did you last inspect a ladder?');
+  });
+
+  it('escapes a script-laden title', () => {
+    const evil = `<${'script'}>alert(1)</${'script'}>`;
+    const html = win.buildSignoffSheet({ ...baseTopic, title: evil });
+    expect(html).not.toContain(evil);
+    expect(html).toContain('&lt;script&gt;');
+  });
+
+  it('returns empty string for null/undefined topic', () => {
+    expect(win.buildSignoffSheet(null)).toBe('');
+    expect(win.buildSignoffSheet(undefined)).toBe('');
+  });
+});
+
+describe('logTalk', () => {
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+  });
+
+  it('appends an entry and persists to localStorage meetingLog', () => {
+    win.logTalk('topic-x');
+    expect(JSON.parse(win.localStorage.getItem('meetingLog'))).toHaveLength(1);
+  });
+
+  it('records an ISO date on each entry', () => {
+    win.logTalk('topic-x');
+    const entry = JSON.parse(win.localStorage.getItem('meetingLog'))[0];
+    expect(entry.topicId).toBe('topic-x');
+    expect(entry.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(Number.isNaN(Date.parse(entry.date))).toBe(false);
+  });
+
+  it('accumulates multiple entries', () => {
+    win.logTalk('a');
+    win.logTalk('b');
+    win.logTalk('a');
+    const log = JSON.parse(win.localStorage.getItem('meetingLog'));
+    expect(log).toHaveLength(3);
+    expect(log[2].topicId).toBe('a');
+  });
+
+  it('warns via console.warn and does not throw when storage fails', () => {
+    // app.js runs inside jsdom, so spy on jsdom's console, not Node's.
+    const warn = vi.spyOn(win.console, 'warn').mockImplementation(() => {});
+    // jsdom cannot have localStorage.setItem monkey-patched. jsdom
+    // enforces a 5,000,000-code-unit quota per key+value sum and does
+    // not store over-quota writes, so fill storage to just under the
+    // limit; logTalk's own small write then genuinely throws.
+    win.localStorage.setItem('qfa', 'x'.repeat(4_000_000));
+    win.localStorage.setItem('qfb', 'x'.repeat(999_985));
+    expect(() => win.logTalk('topic-x')).not.toThrow();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+    win.localStorage.clear();
+  });
+});
+
+describe('getMeetingLog accessor', () => {
+  it('returns a copy of the in-memory log', () => {
+    win.localStorage.clear();
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+    win.logTalk('topic-1');
+    const log = sft.getMeetingLog();
+    expect(log).toHaveLength(1);
+    expect(log[0].topicId).toBe('topic-1');
+    // Copy semantics: mutating the returned array must not affect state
+    log.push({ topicId: 'fake', date: '2000-01-01' });
+    expect(sft.getMeetingLog()).toHaveLength(1);
+  });
+});
+
+describe('sign-off sheet button', () => {
+  const topic = {
+    id: 'signoff-topic',
+    title: 'Forklift Checks',
+    category: 'Equipment',
+    source: 'OSHA',
+    source_ref: 'ref-1',
+    duration: '5 min',
+    summary: 'Daily forklift inspection.',
+    key_points: ['Check brakes'],
+  };
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+    });
+    win.history.replaceState(null, '', `#${topic.id}`);
+  });
+
+  afterEach(() => {
+    // jsdom function declarations are non-configurable; restore by
+    // reassignment rather than delete.
+    win.currentTopic = origCurrentTopic;
+    // Restore print stubs and clear leaked sheet state so tests do not
+    // depend on execution order.
+    win.print = origPrint;
+    document.body.classList.remove('sheet-open');
+    document.getElementById('signoff-sheet').innerHTML = '';
+  });
+
+  const origCurrentTopic = win.currentTopic;
+  const origPrint = win.print;
+
+  it('shows a toast, does not print, and renders nothing when no topic is loaded', () => {
+    win.history.replaceState(null, '', '#');
+    win.currentTopic = () => null;
+    const printSpy = vi.fn();
+    win.print = printSpy;
+    document.getElementById('signoff-btn').click();
+    expect(printSpy).not.toHaveBeenCalled();
+    expect(document.getElementById('toast').textContent).toMatch(/no topic/i);
+    expect(document.getElementById('signoff-sheet').querySelector('.signoff-title')).toBeNull();
+    expect(document.body.classList.contains('sheet-open')).toBe(false);
+  });
+
+  it('renders the sheet, opens print mode, and calls window.print once', () => {
+    const printSpy = vi.fn();
+    win.print = printSpy;
+    document.getElementById('signoff-btn').click();
+    expect(printSpy).toHaveBeenCalledTimes(1);
+    expect(document.getElementById('signoff-sheet').innerHTML).toContain('Forklift Checks');
+    expect(document.body.classList.contains('sheet-open')).toBe(true);
+  });
+
+  it('removes sheet-open and hides the sheet on afterprint', () => {
+    const printSpy = vi.fn();
+    win.print = printSpy;
+    document.getElementById('signoff-btn').click();
+    win.dispatchEvent(new win.Event('afterprint'));
+    expect(document.body.classList.contains('sheet-open')).toBe(false);
+    expect(document.getElementById('signoff-sheet').innerHTML).toBe('');
+  });
+
+  it('closes an open sheet before printing when #print-btn is clicked', () => {
+    document.getElementById('signoff-btn').click();
+    expect(document.body.classList.contains('sheet-open')).toBe(true);
+    let sheetOpenAtPrint = null;
+    win.print = () => {
+      sheetOpenAtPrint = document.body.classList.contains('sheet-open');
+    };
+    document.getElementById('print-btn').click();
+    expect(sheetOpenAtPrint).toBe(false);
+    expect(document.body.classList.contains('sheet-open')).toBe(false);
+    expect(document.getElementById('signoff-sheet').innerHTML).toBe('');
+  });
+
+  it('showTopic clears a stale sheet-open class', () => {
+    document.body.classList.add('sheet-open');
+    sft.showTopic(topic, false);
+    expect(document.body.classList.contains('sheet-open')).toBe(false);
+  });
+});
+
+describe('showTopic — last delivered line', () => {
+  const topic = {
+    id: 'delivered-topic',
+    title: 'Delivered Topic',
+    category: 'General',
+    source: 'OSHA',
+    source_ref: 'ref',
+    duration: '5 min',
+    summary: 'Sum',
+    key_points: [],
+  };
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+    });
+  });
+
+  it('shows "Last delivered: <date>" when a meetingLog entry exists', () => {
+    win.logTalk('delivered-topic');
+    sft.showTopic(topic, false);
+    const footer = document.querySelector('.topic-card-footer');
+    expect(footer.textContent).toMatch(/Last delivered: \d{4}-\d{2}-\d{2}/);
+  });
+
+  it('does not show a last-delivered line without log entries', () => {
+    sft.showTopic(topic, false);
+    const footer = document.querySelector('.topic-card-footer');
+    expect(footer.textContent).not.toMatch(/Last delivered/);
+  });
+
+  it('keeps used-button labels unchanged after logging a talk', () => {
+    sft.showTopic(topic, false);
+    const btn = document.getElementById('use-this-btn');
+    expect(btn.textContent).toContain('I Used This in a Meeting');
+    btn.click();
+    expect(btn.textContent).toContain('Used in 1 Meeting');
+    expect(btn.disabled).toBe(true);
+    // usedTopics semantics unchanged
+    expect(sft.getState().usedTopics['delivered-topic']).toBe(1);
+  });
+
+  it('use-this click also records a meetingLog entry', () => {
+    sft.showTopic(topic, false);
+    document.getElementById('use-this-btn').click();
+    expect(sft.getMeetingLog()).toHaveLength(1);
+    expect(sft.getMeetingLog()[0].topicId).toBe('delivered-topic');
+  });
+});
+
+describe('use-this-btn updates last-delivered in place', () => {
+  const topic = {
+    id: 'inplace-topic',
+    title: 'In Place Topic',
+    category: 'General',
+    source: 'OSHA',
+    source_ref: 'ref',
+    duration: '5 min',
+    summary: 'Sum',
+    key_points: [],
+  };
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+    });
+  });
+
+  it('inserts a last-delivered line in the footer on use-this click without a re-render', () => {
+    sft.showTopic(topic, false);
+    expect(document.querySelector('.topic-card-footer .topic-last-delivered')).toBeNull();
+    document.getElementById('use-this-btn').click();
+    const line = document.querySelector('.topic-card-footer .topic-last-delivered');
+    expect(line).not.toBeNull();
+    expect(line.textContent).toMatch(/Last delivered: \d{4}-\d{2}-\d{2}/);
+  });
+
+  it('updates an existing last-delivered line in place', () => {
+    win.logTalk(topic.id);
+    sft.showTopic(topic, false);
+    const line = document.querySelector('.topic-card-footer .topic-last-delivered');
+    expect(line).not.toBeNull();
+    document.getElementById('use-this-btn').click();
+    const lines = document.querySelectorAll('.topic-card-footer .topic-last-delivered');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].textContent).toMatch(/Last delivered: \d{4}-\d{2}-\d{2}/);
+  });
+});
+
+describe('init — meetingLog restore sanitization', () => {
+  const topic = {
+    id: 'sanitize-topic',
+    title: 'Sanitize Topic',
+    category: 'General',
+    source: 'OSHA',
+    source_ref: 'ref',
+    duration: '5 min',
+    summary: 'Sum',
+    key_points: [],
+  };
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+  });
+
+  it('drops malformed entries and warns during restore', () => {
+    win.localStorage.setItem('meetingLog', '[null, {"topicId":"x"}, {"topicId":"y","date":"2026-01-01"}]');
+    const warn = vi.spyOn(win.console, 'warn').mockImplementation(() => {});
+    win.init();
+    warn.mockRestore();
+    expect(sft.getMeetingLog()).toEqual([{ topicId: 'y', date: '2026-01-01' }]);
+  });
+
+  it('showTopic does not wedge after a sanitized restore', () => {
+    win.localStorage.setItem('meetingLog', '[null, {"topicId":"x"}, {"topicId":"y","date":"2026-01-01"}]');
+    const warn = vi.spyOn(win.console, 'warn').mockImplementation(() => {});
+    win.init();
+    warn.mockRestore();
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: sft.getMeetingLog(),
+    });
+    expect(() => sft.showTopic(topic, false)).not.toThrow();
+    expect(sft.isRendering()).toBe(false);
+  });
+});
+
+describe('harness — assertDomElements includes sign-off elements', () => {
+  it('throws when #signoff-sheet is missing', () => {
+    const orig = win.document.getElementById.bind(win.document);
+    win.document.getElementById = /** @type {any} */ ((id) => {
+      if (id === 'signoff-sheet') return null;
+      return orig(id);
+    });
+    expect(() => win.assertDomElements()).toThrow(/signoff-sheet.*not found/i);
+    win.document.getElementById = /** @type {any} */ (orig);
+  });
+
+  it('reset() clears meetingLog', () => {
+    win.localStorage.clear();
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+    win.logTalk('a');
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+    expect(sft.getMeetingLog()).toHaveLength(0);
+  });
+});

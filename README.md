@@ -11,7 +11,8 @@ Click **Get a Topic** and you get a concise, ready-to-read safety brief: a title
 - Pick a category or pull from all of them
 - Copy the text or a shareable link, or print a clean handout
 - Browse the full library at [`/browse.html`](https://alivegeek.github.io/safety-topic/browse.html) with keyword search
-- Remembers which topics you've already used (local only) so you don't repeat
+- Print a **Sign-Off Sheet** — the brief plus date, presenter, and 12 signature rows with an attestation line, ready to hand around and file
+- Remembers which topics you've used and when each was last delivered (local only) so you don't repeat
 
 ## Categories
 
