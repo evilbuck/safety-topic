@@ -344,6 +344,29 @@ describe('validateTopics — schema validation', () => {
     expect(v).toHaveLength(0);
     expect(i).toHaveLength(1);
   });
+
+  it('accepts the real TOPICS catalog from topics-data.js with unique ids', () => {
+    // jsdom does not fetch external script srcs, so index.html's
+    // <script src="topics-data.js"> never ran in this test context.
+    // Inject the real catalog the same way, then run the same
+    // validateTopics pass app.js:223 runs at page load.
+    const topicsSrc = fs.readFileSync(path.resolve('./topics-data.js'), 'utf8');
+    const scriptEl = win.document.createElement('script');
+    scriptEl.textContent = topicsSrc;
+    win.document.body.appendChild(scriptEl);
+    try {
+      const topics = /** @type {{id: string}[]} */ (win.eval('TOPICS'));
+      const { valid: v, invalid: i } = win.validateTopics(topics);
+      expect(i).toHaveLength(0);
+      expect(v).toHaveLength(topics.length);
+      const ids = topics.map((t) => t.id);
+      expect(new Set(ids).size).toBe(ids.length);
+    } finally {
+      // Remove the injected script so later tests in this shared jsdom
+      // window see no leftover DOM node from this test.
+      scriptEl.remove();
+    }
+  });
 });
 
 describe('filter state persistence', () => {

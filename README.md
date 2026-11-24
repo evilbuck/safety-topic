@@ -19,8 +19,9 @@ Click **Get a Topic** and you get a concise, ready-to-read safety brief: a title
 
 ## Categories
 
-50 topics across 10 categories:
+60 topics across 11 categories:
 
+- Construction & Field Safety
 - Chemicals & Hazardous Materials
 - Driving & Travel Safety
 - Ergonomics & Body Mechanics
