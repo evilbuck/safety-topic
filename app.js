@@ -116,6 +116,7 @@ function assertDomElements() {
     'signoff-sheet',
     'signoff-btn',
     'program-pulse',
+    'program-report',
   ];
   for (const id of required) {
     const el =
@@ -299,8 +300,10 @@ function wireEvents() {
   copyTextBtn.addEventListener("click", copyText);
   copyLinkBtn.addEventListener("click", copyLink);
   printBtn.addEventListener("click", () => {
-    // Never print the stale sign-off sheet via the main print button.
+    // Never print the stale sign-off sheet or program report via the
+    // main print button.
     closeSignoffSheet();
+    closeProgramReport();
     window.print();
   });
   signoffBtn.addEventListener("click", openSignoffSheet);
@@ -498,8 +501,10 @@ function todayISO() {
  * Appends a dated entry ({ topicId, date }) to the meeting log and
  * persists it to localStorage under the `meetingLog` key, then
  * re-renders the program pulse so the dashboard reflects the new
- * entry immediately. Never throws: storage failures are reported via
- * console.warn and the in-memory log is still updated.
+ * entry immediately. When the program report overlay is open, also
+ * refreshes the report body in place (range selection preserved);
+ * a closed overlay is left untouched. Never throws: storage failures
+ * are reported via console.warn and the in-memory log is still updated.
  * @param {string} topicId - The ID of the delivered topic.
  */
 function logTalk(topicId) {
@@ -510,6 +515,13 @@ function logTalk(topicId) {
     console.warn("[SafetyTopic] Could not persist meeting log:", err);
   }
   renderProgramPulse();
+  // Live-update contract: refresh the open report in place (range kept).
+  // When the overlay is closed there is nothing to refresh — re-rendering
+  // the hidden section would waste work per click and refill the section
+  // closeProgramReport() cleared.
+  if (document.body.classList.contains("report-open")) {
+    renderProgramReportBody();
+  }
 }
 
 // ---------- Program Pulse ----------
@@ -843,6 +855,9 @@ function renderProgramPulse() {
         <ul class="pulse-recent">${recentHtml}</ul>`
     }
     ${suggestionHtml}
+    <div class="pulse-report-actions">
+      <button id="report-open-btn" class="btn btn-primary" type="button">Program Report</button>
+    </div>
   `;
 
   const loadBtn = document.getElementById("pulse-load-btn");
@@ -855,6 +870,11 @@ function renderProgramPulse() {
         showTopic(suggestion.topic, true);
       }
     });
+  }
+
+  const reportBtn = document.getElementById("report-open-btn");
+  if (reportBtn) {
+    reportBtn.addEventListener("click", openProgramReport);
   }
 }
 
@@ -927,7 +947,9 @@ function buildSignoffSheet(topic) {
 
 /**
  * Opens the sign-off sheet for the currently loaded topic: renders it
- * into #signoff-sheet, adds body.sheet-open (print mode), and calls
+ * into #signoff-sheet, closes any open program report (body.report-open
+ * print rules would otherwise win over the sheet's and print the wrong
+ * document), adds body.sheet-open (print mode), and calls
  * window.print() when available. With no topic loaded, shows an error
  * toast and does nothing else. When window.print is unavailable, the
  * sheet stays visible on screen with an info toast instead.
@@ -943,6 +965,9 @@ function openSignoffSheet() {
     if (!signoffSheet) return;
   }
   signoffSheet.innerHTML = buildSignoffSheet(topic);
+  // Mirror the main Print button and showTopic(): never print with a
+  // stale overlay open, so only the sheet is visible in print mode.
+  closeProgramReport();
   document.body.classList.add("sheet-open");
   if (typeof window.print === "function") {
     window.print();
@@ -960,6 +985,577 @@ function closeSignoffSheet() {
   if (signoffSheet) signoffSheet.innerHTML = "";
 }
 
+// ---------- Program Report ----------
+/** Default report range selection: the current calendar year. */
+const REPORT_DEFAULT_RANGE = { preset: "year", from: null, to: null };
+/** Range selection currently shown in the report overlay (null inputs = unbounded). */
+let reportRange = { preset: "year", from: null, to: null };
+
+/**
+ * Left-pads a number to two digits for ISO date assembly.
+ * @param {number} n - A month or day number.
+ * @returns {string} Two-digit string, e.g. 7 → "07".
+ */
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+/**
+ * Resolves a report range selection into concrete inclusive ISO bounds
+ * and a human-readable label. Presets are calendar-based and resolved
+ * against today's local date: month = current calendar month, quarter =
+ * current calendar quarter, year = current calendar year, all = no
+ * bounds. Custom ranges use the given ISO from/to, treating a missing
+ * or non-ISO bound as unbounded on that side (both unbounded = all
+ * time). Unrecognized presets are treated as all time. Never throws.
+ * @param {{ preset?: string, from?: string | null, to?: string | null } | null | undefined} range
+ *   The range selection (callers own the default; `undefined` = all time).
+ * @returns {{ from: string | null, to: string | null, label: string }}
+ *   Inclusive bounds (null = unbounded) and a report label.
+ */
+function resolveReportRange(range) {
+  const today = todayISO();
+  const year = +today.slice(0, 4);
+  const month = +today.slice(5, 7);
+  const r = range && typeof range === "object" ? range : {};
+  const preset = typeof r.preset === "string" ? r.preset : "";
+
+  /** @type {{ from: string | null, to: string | null, label: string }} */
+  const bounds = { from: null, to: null, label: "All time" };
+
+  if (preset === "month") {
+    const lastDay = new Date(year, month, 0).getDate();
+    bounds.from = `${today.slice(0, 7)}-01`;
+    bounds.to = `${today.slice(0, 7)}-${pad2(lastDay)}`;
+    bounds.label = `This month (${bounds.from} to ${bounds.to})`;
+  } else if (preset === "quarter") {
+    const qStartMonth = Math.floor((month - 1) / 3) * 3 + 1;
+    const qEndMonth = qStartMonth + 2;
+    bounds.from = `${year}-${pad2(qStartMonth)}-01`;
+    bounds.to = `${year}-${pad2(qEndMonth)}-${pad2(new Date(year, qEndMonth, 0).getDate())}`;
+    bounds.label = `This quarter (${bounds.from} to ${bounds.to})`;
+  } else if (preset === "year") {
+    bounds.from = `${year}-01-01`;
+    bounds.to = `${year}-12-31`;
+    bounds.label = `This year (${bounds.from} to ${bounds.to})`;
+  } else if (preset === "custom") {
+    const fromOk =
+      typeof r.from === "string" && PULSE_ISO_DATE_RE.test(r.from);
+    const toOk = typeof r.to === "string" && PULSE_ISO_DATE_RE.test(r.to);
+    if (!fromOk && !toOk) return bounds;
+    bounds.from = fromOk ? /** @type {string} */ (r.from) : null;
+    bounds.to = toOk ? /** @type {string} */ (r.to) : null;
+    if (fromOk && toOk) {
+      bounds.label = `Custom range (${bounds.from} to ${bounds.to})`;
+    } else if (fromOk) {
+      bounds.label = `Custom range (${bounds.from} onward)`;
+    } else {
+      bounds.label = `Custom range (through ${bounds.to})`;
+    }
+  }
+  // "all" and unrecognized presets keep the unbounded default above.
+  return bounds;
+}
+
+/**
+ * Pure, deterministic builder of the Safety Program Report from a
+ * meeting log, the topic catalog, and a range selection. Never throws
+ * on malformed input and never mutates its arguments. Entries without
+ * a string topicId are ignored entirely (Pulse convention); entries
+ * whose date is not an ISO YYYY-MM-DD string are excluded from rows
+ * and totals and counted in `excludedDates` (surfaced by the renderer,
+ * never silent). Unknown topic ids keep their row as "(topic no longer
+ * in catalog)" with category "—", count toward totals, and are
+ * excluded from the coverage ledger. Coverage is scoped to the range:
+ * one row per catalog category (delivered = distinct topics delivered
+ * in range), sorted never-delivered first, then oldest last-delivered
+ * first (category-name tie-break), mirroring the Pulse ledger.
+ * @param {{ topicId: string, date: string }[]} log - The meeting log.
+ * @param {Topic[]} topics - The topic catalog.
+ * @param {{ preset?: string, from?: string | null, to?: string | null } | null | undefined} range
+ *   Range selection; `undefined` is treated as all time.
+ * @returns {{ label: string, from: string | null, to: string | null,
+ *   rows: { date: string, topicId: string, topicTitle: string, category: string }[],
+ *   coverage: { category: string, delivered: number, total: number,
+ *     lastDate: string | null }[],
+ *   summary: { total: number, first: string | null, last: string | null },
+ *   excludedDates: number }}
+ *   Chronological rows (ascending; same-date entries keep log order),
+ *   per-category coverage, in-range summary counts, and the count of
+ *   malformed-date entries excluded from the whole report. A from > to
+ *   custom range deterministically yields empty rows.
+ */
+function buildProgramReport(log, topics, range) {
+  const safeLog = Array.isArray(log) ? log : [];
+  const safeTopics = Array.isArray(topics) ? topics : [];
+  const bounds = resolveReportRange(range);
+
+  const topicById = new Map();
+  for (const t of safeTopics) {
+    if (t && typeof t.id === "string" && !topicById.has(t.id)) {
+      topicById.set(t.id, t);
+    }
+  }
+
+  // Catalog category totals + per-range delivery tracking (Pulse ledger scope)
+  const catTotals = new Map();
+  const catDeliveredIds = new Map();
+  const catLastDate = new Map();
+  for (const t of safeTopics) {
+    if (!t || typeof t.category !== "string") continue;
+    catTotals.set(t.category, (catTotals.get(t.category) || 0) + 1);
+    if (!catDeliveredIds.has(t.category)) catDeliveredIds.set(t.category, new Set());
+    if (!catLastDate.has(t.category)) catLastDate.set(t.category, null);
+  }
+
+  /** @type {{ date: string, topicId: string, topicTitle: string, category: string }[]} */
+  const rows = [];
+  let excludedDates = 0;
+  let first = null;
+  let last = null;
+
+  for (const entry of safeLog) {
+    if (!entry || typeof entry.topicId !== "string") continue;
+    const dateOk =
+      typeof entry.date === "string" && PULSE_ISO_DATE_RE.test(entry.date);
+    if (!dateOk) {
+      excludedDates += 1;
+      continue;
+    }
+    if (bounds.from !== null && entry.date < bounds.from) continue;
+    if (bounds.to !== null && entry.date > bounds.to) continue;
+
+    const topic = topicById.get(entry.topicId);
+    rows.push({
+      date: entry.date,
+      topicId: entry.topicId,
+      topicTitle:
+        topic && typeof topic.title === "string"
+          ? topic.title
+          : "(topic no longer in catalog)",
+      category:
+        topic && typeof topic.category === "string" ? topic.category : "—",
+    });
+    if (first === null || entry.date < first) first = entry.date;
+    if (last === null || entry.date > last) last = entry.date;
+
+    if (topic && typeof topic.category === "string" && catTotals.has(topic.category)) {
+      /** @type {Set<string>} */ (catDeliveredIds.get(topic.category)).add(topic.id);
+      const prev = catLastDate.get(topic.category);
+      if (prev === null || entry.date > prev) {
+        catLastDate.set(topic.category, entry.date);
+      }
+    }
+  }
+
+  // Stable sort (ES2019+): same-date entries keep their log order.
+  rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const coverage = [...catTotals.entries()].map(([category, total]) => ({
+    category,
+    delivered: /** @type {Set<string>} */ (catDeliveredIds.get(category)).size,
+    total,
+    lastDate: catLastDate.get(category) ?? null,
+  }));
+  coverage.sort((a, b) => {
+    const aKey = a.lastDate ?? "";
+    const bKey = b.lastDate ?? "";
+    if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+    return a.category < b.category ? -1 : a.category > b.category ? 1 : 0;
+  });
+
+  return {
+    label: bounds.label,
+    from: bounds.from,
+    to: bounds.to,
+    rows,
+    coverage,
+    summary: { total: rows.length, first, last },
+    excludedDates,
+  };
+}
+
+/**
+ * Escapes a single CSV cell per RFC 4180: values containing quotes,
+ * commas, carriage returns, or newlines are wrapped in double quotes
+ * with internal quotes doubled. Null/undefined become "".
+ * (CSV escaping is its own scheme — HTML rendering must still use
+ * escHtml(), never this function.)
+ * @param {unknown} value - The cell value to escape.
+ * @returns {string} An RFC 4180-safe CSV cell.
+ */
+function escapeCsvCell(value) {
+  if (value == null) return "";
+  const s = String(value);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * Serializes a program report to RFC 4180 CSV text: UTF-8 BOM prefix,
+ * CRLF line endings (including a trailing one), and the columns
+ * Date,Topic,Category,Topic ID with every cell RFC 4180-escaped.
+ * Never throws on malformed reports.
+ * @param {{ rows?: { date?: unknown, topicTitle?: unknown, category?: unknown, topicId?: unknown }[] } | null | undefined} report
+ *   A report object as returned by buildProgramReport.
+ * @returns {string} The complete CSV file content.
+ */
+function buildProgramReportCsv(report) {
+  const r = report && typeof report === "object" ? report : {};
+  const rows = Array.isArray(r.rows) ? r.rows : [];
+  const lines = ["Date,Topic,Category,Topic ID"];
+  for (const row of rows) {
+    const e = row && typeof row === "object" ? row : {};
+    lines.push(
+      [
+        escapeCsvCell(e.date),
+        escapeCsvCell(e.topicTitle),
+        escapeCsvCell(e.category),
+        escapeCsvCell(e.topicId),
+      ].join(","),
+    );
+  }
+  return `\uFEFF${lines.join("\r\n")}\r\n`;
+}
+
+/**
+ * Builds the report footer HTML: informational retention note, the
+ * pointer to filed Safety Talk Records, and the site's source/
+ * disclaimer language. Facts only — no compliance verdicts.
+ * @returns {string} Footer HTML.
+ */
+function buildReportFooterHtml() {
+  return `
+    <div class="report-footer">
+      <p>Records of these talks: keep at least 1 year (CA/WA floors); Cal/OSHA's enforcement posture for employers with 10+ employees is 3 years.</p>
+      <p>Attendance names and signatures: see Safety Talk Records on file.</p>
+      <p>Content curated from public-domain sources (OSHA, DOE EHSS, NIOSH). Always defer to your site-specific safety procedures.</p>
+    </div>
+  `;
+}
+
+/**
+ * Builds the report header HTML: title, company/crew fill-in lines,
+ * and the generated date + range label line.
+ * @param {string} label - The range label to display.
+ * @returns {string} Header HTML.
+ */
+function buildReportHeaderHtml(label) {
+  return `
+    <div class="report-header">
+      <h2 class="report-title">Safety Talk Program Report</h2>
+      <p class="report-field"><strong>Company</strong> <span class="report-blank"></span></p>
+      <p class="report-field"><strong>Crew</strong> <span class="report-blank"></span></p>
+      <p class="report-generated"><strong>Generated:</strong> ${escHtml(todayISO())} · <strong>Period:</strong> ${escHtml(label)}</p>
+    </div>
+  `;
+}
+
+/**
+ * Builds the printable report body HTML from a program report: header
+ * (title, company/crew fill-in lines, generated date + range label),
+ * summary (total, first/last, informational cadence line), the
+ * chronological delivery table, the per-category coverage summary,
+ * the excluded-entries note (only when entries were excluded), an
+ * honest empty state when nothing is in range, and the footer. All
+ * data-derived strings pass through escHtml().
+ * @param {{ label: string, rows: { date: string, topicId: string, topicTitle: string, category: string }[], coverage: { category: string, delivered: number, total: number, lastDate: string | null }[], summary: { total: number, first: string | null, last: string | null }, excludedDates: number }} report
+ *   A report object as returned by buildProgramReport.
+ * @returns {string} The report body HTML.
+ */
+function buildProgramReportHtml(report) {
+  const excludedNote =
+    report.excludedDates > 0
+      ? `<p class="report-excluded-note">${report.excludedDates} ${
+          report.excludedDates === 1
+            ? "entry with an unrecognizable date was"
+            : "entries with unrecognizable dates were"
+        } excluded</p>`
+      : "";
+
+  if (!report.summary || report.summary.total === 0) {
+    return `
+      ${buildReportHeaderHtml(report.label)}
+      ${excludedNote}
+      <p class="report-empty-state">No safety talks were recorded in this period.</p>
+      ${buildReportFooterHtml()}
+    `;
+  }
+
+  const rowsHtml = report.rows
+    .map(
+      (row) => `
+        <tr>
+          <td>${escHtml(row.date)}</td>
+          <td>${escHtml(row.topicTitle)}</td>
+          <td>${escHtml(row.category)}</td>
+        </tr>`,
+    )
+    .join("");
+
+  const coverageHtml = report.coverage
+    .map(
+      (c) => `
+        <li class="report-coverage-row">
+          <span class="report-cat-name">${escHtml(c.category)}</span>
+          <span class="report-cat-counts">${c.delivered}/${c.total} delivered</span>
+          <span class="report-cat-last">${c.lastDate ? `last: ${escHtml(c.lastDate)}` : "last: —"}</span>
+        </li>`,
+    )
+    .join("");
+
+  return `
+    ${buildReportHeaderHtml(report.label)}
+    ${excludedNote}
+    <div class="report-summary">
+      <p><strong>Total talks in range:</strong> ${report.summary.total}</p>
+      <p><strong>First recorded:</strong> ${escHtml(report.summary.first)} · <strong>Last recorded:</strong> ${escHtml(report.summary.last)}</p>
+      <p class="report-cadence">State cadence floors, when they apply: CA every 10 working days; WA weekly; OR monthly. No federal mandate.</p>
+    </div>
+    <p class="report-section-label">Safety talks delivered</p>
+    <table class="report-table">
+      <thead>
+        <tr><th>Date</th><th>Topic</th><th>Category</th></tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <p class="report-section-label">Category coverage</p>
+    <ul class="report-coverage">${coverageHtml}</ul>
+    ${buildReportFooterHtml()}
+  `;
+}
+
+/**
+ * Rebuilds only the report body (.report-body) inside #program-report,
+ * leaving the range controls mounted so focus (e.g. on the preset
+ * select or a date input) survives the update. Used by the preset and
+ * date handlers and logTalk's live update; the full renderProgramReport()
+ * is used when the overlay opens. Warns and leaves the body untouched
+ * when the overlay or its body is missing from the DOM.
+ * @returns {void}
+ */
+function renderProgramReportBody() {
+  const section = document.getElementById("program-report");
+  const body = section && section.querySelector(".report-body");
+  if (!body) {
+    console.warn(
+      "[SafetyTopic] Could not update program report body: #program-report .report-body not found in DOM",
+    );
+    return;
+  }
+  body.innerHTML = buildProgramReportHtml(
+    buildProgramReport(meetingLog, allTopics, reportRange),
+  );
+}
+
+/**
+ * Syncs the custom from/to date inputs' enabled state from the current
+ * reportRange selection (enabled only in custom mode) without
+ * rebuilding the controls, so focus is preserved across preset
+ * changes.
+ * @returns {void}
+ */
+function syncReportDateInputs() {
+  const isCustom = reportRange.preset === "custom";
+  for (const id of ["report-from", "report-to"]) {
+    const input = document.getElementById(id);
+    if (input) input.disabled = !isCustom;
+  }
+}
+
+/**
+ * Renders the program report overlay into #program-report from the
+ * current meetingLog, catalog, and reportRange selection: range
+ * controls (presets + custom from/to), Print/Download CSV/Close
+ * buttons, and the report body. Used when the overlay opens; range
+ * and logTalk updates go through renderProgramReportBody() so the
+ * controls stay mounted and keep focus. Warns and leaves the section
+ * untouched when #program-report is missing from the DOM.
+ * @returns {void}
+ */
+function renderProgramReport() {
+  const section = document.getElementById("program-report");
+  if (!section) {
+    console.warn(
+      "[SafetyTopic] Could not render program report: #program-report not found in DOM",
+    );
+    return;
+  }
+
+  const presetOptions = [
+    ["month", "This month"],
+    ["quarter", "This quarter"],
+    ["year", "This year"],
+    ["all", "All time"],
+    ["custom", "Custom range"],
+  ]
+    .map(([value, labelText]) => `<option value="${value}">${labelText}</option>`)
+    .join("");
+  const isCustom = reportRange.preset === "custom";
+
+  section.innerHTML = `
+    <div class="report-controls">
+      <label class="report-control">Range
+        <select id="report-range-preset">${presetOptions}</select>
+      </label>
+      <label class="report-control">From
+        <input type="date" id="report-from" class="report-date" value="${escHtml(reportRange.from ?? "")}" ${isCustom ? "" : "disabled"}>
+      </label>
+      <label class="report-control">To
+        <input type="date" id="report-to" class="report-date" value="${escHtml(reportRange.to ?? "")}" ${isCustom ? "" : "disabled"}>
+      </label>
+      <button id="report-print-btn" class="btn btn-primary" type="button">Print</button>
+      <button id="report-csv-btn" class="btn btn-primary" type="button">Download CSV</button>
+      <button id="report-close-btn" class="btn btn-ghost" type="button">Close</button>
+    </div>
+    <div class="report-body">
+      ${buildProgramReportHtml(buildProgramReport(meetingLog, allTopics, reportRange))}
+    </div>
+  `;
+
+  const presetSelect = document.getElementById("report-range-preset");
+  if (presetSelect) {
+    presetSelect.value = reportRange.preset;
+    presetSelect.addEventListener("change", () => {
+      reportRange = {
+        preset: presetSelect.value,
+        from: reportRange.from,
+        to: reportRange.to,
+      };
+      // Update the mounted controls in place (custom mode enables the
+      // date inputs) and rebuild only the body so the firing select
+      // keeps focus.
+      syncReportDateInputs();
+      renderProgramReportBody();
+    });
+  }
+
+  // Date inputs apply only in custom mode; a change re-reads both
+  // inputs so editing either keeps the other's current value.
+  const wireDateInput = (id) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener("change", () => {
+      const fromInput = document.getElementById("report-from");
+      const toInput = document.getElementById("report-to");
+      reportRange = {
+        preset: "custom",
+        from: fromInput && fromInput.value ? fromInput.value : null,
+        to: toInput && toInput.value ? toInput.value : null,
+      };
+      renderProgramReportBody();
+    });
+  };
+  wireDateInput("report-from");
+  wireDateInput("report-to");
+
+  const printBtnEl = document.getElementById("report-print-btn");
+  if (printBtnEl) {
+    printBtnEl.addEventListener("click", () => {
+      if (typeof window.print === "function") {
+        window.print();
+      } else {
+        showToast("Print from your browser menu");
+      }
+    });
+  }
+
+  const csvBtnEl = document.getElementById("report-csv-btn");
+  if (csvBtnEl) {
+    csvBtnEl.addEventListener("click", () => {
+      exportProgramReportCsv(
+        buildProgramReport(meetingLog, allTopics, reportRange),
+      );
+    });
+  }
+
+  const closeBtnEl = document.getElementById("report-close-btn");
+  if (closeBtnEl) {
+    closeBtnEl.addEventListener("click", closeProgramReport);
+  }
+}
+
+/**
+ * Opens the program report overlay: resets the range to the default
+ * (This year), renders the report into #program-report, and adds
+ * body.report-open (print mode). Warns without side effects when
+ * #program-report is missing from the DOM.
+ * @returns {void}
+ */
+function openProgramReport() {
+  const section = document.getElementById("program-report");
+  if (!section) {
+    console.warn(
+      "[SafetyTopic] Could not open program report: #program-report not found in DOM",
+    );
+    return;
+  }
+  reportRange = { ...REPORT_DEFAULT_RANGE };
+  renderProgramReport();
+  document.body.classList.add("report-open");
+}
+
+/**
+ * Closes the program report: removes body.report-open and clears the
+ * rendered report. Safe to call when the overlay is not open.
+ * @returns {void}
+ */
+function closeProgramReport() {
+  document.body.classList.remove("report-open");
+  const section = document.getElementById("program-report");
+  if (section) section.innerHTML = "";
+}
+
+/**
+ * Downloads the program report as a CSV file named
+ * safety-talk-program-report-<todayISO()>.csv via Blob +
+ * URL.createObjectURL + a temporary <a download> click, synchronously
+ * inside the caller's user gesture; the temporary anchor is removed on
+ * every path (including a click() throw) and the object URL is revoked
+ * immediately after. Feature-detects Blob, object URLs, and the
+ * download attribute: when support is missing, shows a descriptive
+ * error toast naming the missing capability and warns via
+ * console.warn — never a silent no-op. Download failures are reported
+ * via console.warn + toast, never swallowed.
+ * @param {{ rows?: unknown[] } | null | undefined} report
+ *   A report object as returned by buildProgramReport.
+ * @returns {void}
+ */
+function exportProgramReportCsv(report) {
+  const missing = [];
+  if (typeof Blob !== "function") missing.push("Blob support");
+  if (typeof URL === "undefined" || typeof URL.createObjectURL !== "function") {
+    missing.push("object URL support");
+  }
+  const anchor = document.createElement("a");
+  if (!anchor || !("download" in anchor)) missing.push("file download support");
+  if (missing.length > 0) {
+    const msg = `CSV export unavailable — this browser lacks ${missing.join(" and ")}`;
+    console.warn(`[SafetyTopic] ${msg}`);
+    showToast(msg);
+    return;
+  }
+
+  let url = null;
+  try {
+    const blob = new Blob([buildProgramReportCsv(report)], {
+      type: "text/csv;charset=utf-8;",
+    });
+    url = URL.createObjectURL(blob);
+    anchor.href = url;
+    anchor.download = `safety-talk-program-report-${todayISO()}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    showToast("✓ Report downloaded as CSV");
+  } catch (err) {
+    console.warn("[SafetyTopic] CSV export failed:", err);
+    showToast("CSV export failed — try a different browser");
+  } finally {
+    // Remove the anchor on every path, including a click() throw.
+    if (anchor.parentNode) anchor.parentNode.removeChild(anchor);
+    if (url) URL.revokeObjectURL(url);
+  }
+}
+
 // ---------- Render ----------
 /**
  * Renders a topic card into the DOM, including title, summary, key
@@ -974,8 +1570,10 @@ function showTopic(topic, updateHash) {
   if (isRendering) return;
   isRendering = true;
 
-  // Clear any stale sheet-open state so a later print prints the card.
+  // Clear any stale sheet/report print state so a later print prints
+  // the card, never the sign-off sheet or the program report.
   closeSignoffSheet();
+  closeProgramReport();
 
   // Track that we've seen this topic
   (window.markSeen ?? markSeen)(topic.id);
@@ -1246,7 +1844,9 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
     usedTopics = overrides.usedTopics ?? {};
     meetingLog = overrides.meetingLog ?? [];
     isRendering = false;
+    reportRange = { ...REPORT_DEFAULT_RANGE };
     closeSignoffSheet();
+    closeProgramReport();
   };
 
   /**
@@ -1333,6 +1933,12 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
   window.__safetyTopic.computeProgramStats = computeProgramStats;
   window.__safetyTopic.suggestNextTopic = suggestNextTopic;
   window.__safetyTopic.renderProgramPulse = renderProgramPulse;
+  window.__safetyTopic.buildProgramReport = buildProgramReport;
+  window.__safetyTopic.resolveReportRange = resolveReportRange;
+  window.__safetyTopic.renderProgramReport = renderProgramReport;
+  window.__safetyTopic.openProgramReport = openProgramReport;
+  window.__safetyTopic.closeProgramReport = closeProgramReport;
+  window.__safetyTopic.exportProgramReportCsv = exportProgramReportCsv;
 
   // Seed initial state so pickRandom etc. have a sane starting point
   window.__safetyTopic.reset();

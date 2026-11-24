@@ -9,7 +9,8 @@ All notable bug fixes and improvements.
 - **Printable Sign-Off Sheet** — new share-bar button prints a one-page Safety Talk Record: the topic brief plus date, presenter/location/company fill-in lines, an attestation line, 12 attendance signature rows, notes/follow-up space, and a presenter sign-off line — the fields conventional toolbox-talk records use.
 - **Dated meeting log** — "I Used This" now also records a dated entry in localStorage (`meetingLog`), and the topic card shows "Last delivered: <date>". Used-count labels and the "Not used yet" filter are unchanged.
 - **Safety Program Pulse** — new main-page dashboard that reads your recorded talk log: total and this-month talk counts, days since your last recorded talk (with a gentle informational cue past 30 days), a per-category delivered-vs-never coverage ledger (never-delivered categories first), a recent-deliveries list, and a deterministic "suggested next topic" (never-delivered first, most-neglected category) with a one-click Load button. Hidden from print output, like all app chrome.
-- **35 new Vitest tests** (98 total) covering the pulse computations, suggestion determinism, rendering, and live-update paths.
+- **Safety Program Report** — new "Program Report" button in the Program Pulse opens a printable, date-range-filtered report of your recorded talk log: summary counts, a chronological delivery table (Date · Topic · Category), a per-category coverage summary, and an honest footer pointing to your filed Safety Talk Records for attendance names and signatures. Range presets (This month / This quarter / This year / All time) plus custom from/to dates; printing shows only the report. A "Download CSV" button exports the same history as RFC 4180 CSV (BOM + CRLF, Excel-ready) via a temporary object URL that is always revoked.
+- **51 new Vitest tests** (149 total) covering the report builder (preset/custom range math, quarter boundaries, malformed-date exclusion, unknown-topic fallbacks), CSV formatting, overlay wiring, print isolation, and the review-found regression paths.
 
 ### Fixed
 
@@ -18,6 +19,10 @@ All notable bug fixes and improvements.
 - **Program Pulse rendered as a blank padded card when topic data failed to load** — the section now hides when empty, and the never-delivered badge color meets WCAG AA contrast.
 - **Mangled `assertDomElements` error message** — the thrown text embedded literal `\" + \" fragments; now a single clean sentence.
 - **`init()` silently swallowed localStorage restore errors** — the `seenTopics`/`usedTopics` restores (and the `topicFilter` restore in `restoreFilterState()`) used `catch (_) {}`, contradicting the defensive-coding rule; all restores now warn instead of swallowing.
+- **Sign-Off Sheet button printed the Program Report when the report overlay was open** — the report's print rules out-cascaded the sheet's, so the printed artifact was the wrong document. Opening the sign-off sheet now closes the report first, matching how the Print button and topic navigation already clear both overlays.
+- **Changing the report range dropped keyboard focus to the page body** — range controls now stay mounted; only the report body re-renders, so the select/date input you changed keeps focus.
+- **"I Used This" rebuilt the hidden report overlay on every click** — the report now re-renders only while it is actually open, and stays cleared after Close.
+- **CSV export could leave a stray anchor in the DOM if the download click failed** — cleanup now runs on every path.
 
 ## [1.1.0] - 2026-04-16
 

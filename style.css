@@ -825,6 +825,177 @@ body.sheet-open .signoff-sheet {
   color: var(--color-accent-dark);
 }
 
+.pulse-report-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* ---------- Program Report ---------- */
+.program-report {
+  display: none;
+  background: #fff;
+  color: #000;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  padding: 20px 24px;
+}
+
+body.report-open .program-report {
+  display: block;
+}
+
+.report-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 0 16px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eee;
+}
+
+.report-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #555;
+}
+
+.report-control select,
+.report-control .report-date {
+  appearance: none;
+  background: #fff;
+  border: 1.5px solid #bbb;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 0.9rem;
+  color: #000;
+  cursor: pointer;
+}
+
+.report-control select {
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%235a6070' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
+.report-control .report-date:disabled {
+  color: #999;
+  background: #f4f4f4;
+  cursor: not-allowed;
+}
+
+.report-title {
+  font-size: 18pt;
+  margin: 0 0 8px;
+  text-align: center;
+}
+
+.report-field {
+  margin: 4px 0;
+}
+
+.report-blank {
+  display: inline-block;
+  min-width: 220px;
+  border-bottom: 1px solid #000;
+}
+
+.report-generated {
+  font-size: 10pt;
+  margin: 10px 0 4px;
+}
+
+.report-excluded-note {
+  font-size: 9.5pt;
+  font-style: italic;
+  color: #8a3f00;
+  margin: 6px 0;
+}
+
+.report-summary {
+  margin: 8px 0 12px;
+}
+
+.report-summary p {
+  margin: 3px 0;
+  font-size: 10.5pt;
+}
+
+.report-cadence {
+  font-size: 9.5pt;
+  color: #444;
+}
+
+.report-section-label {
+  font-weight: 700;
+  margin: 14px 0 4px;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 12px;
+}
+
+.report-table th,
+.report-table td {
+  border: 1px solid #000;
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.report-coverage {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.report-coverage-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 10pt;
+  padding: 3px 0;
+  border-bottom: 1px dotted #ddd;
+}
+
+.report-cat-name {
+  flex: 1;
+  font-weight: 600;
+}
+
+.report-cat-counts,
+.report-cat-last {
+  font-variant-numeric: tabular-nums;
+}
+
+.report-cat-last {
+  color: #444;
+}
+
+.report-empty-state {
+  font-size: 11pt;
+  margin: 14px 0;
+}
+
+.report-footer {
+  border-top: 1px solid #ccc;
+  margin-top: 16px;
+  padding-top: 8px;
+}
+
+.report-footer p {
+  font-size: 8.5pt;
+  color: #444;
+  margin: 3px 0;
+}
+
 /* ---------- Print Styles ---------- */
 @media print {
   body { background: #fff; font-size: 11pt; }
@@ -909,4 +1080,27 @@ body.sheet-open .signoff-sheet {
   body.sheet-open .signoff-table td.signoff-cell {
     height: 24px;
   }
+
+  /* Program report print mode: report only; controls never print. */
+  #program-report { display: none !important; }
+
+  body.report-open .site-header,
+  body.report-open .controls,
+  body.report-open .topic-card,
+  body.report-open .share-bar,
+  body.report-open .site-footer,
+  body.report-open .toast,
+  body.report-open #program-pulse,
+  body.report-open .signoff-sheet {
+    display: none !important;
+  }
+
+  body.report-open #program-report {
+    display: block !important;
+    border: none;
+    padding: 0;
+    font-size: 10.5pt;
+  }
+
+  body.report-open .report-controls { display: none !important; }
 }

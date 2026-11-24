@@ -833,6 +833,15 @@ function pulseTopic(id, title, category) {
 function isoDaysAgo(n) {
   const d = new Date();
   d.setDate(d.getDate() - n);
+  return localISO(d);
+}
+
+/**
+ * Formats a Date as a local ISO date (YYYY-MM-DD).
+ * @param {Date} d - The date to format.
+ * @returns {string} ISO date string.
+ */
+function localISO(d) {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
   const dd = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${mm}-${dd}`;
@@ -1361,5 +1370,759 @@ describe('print — program pulse hidden', () => {
 
   it('keeps the sign-off sheet print rules intact', () => {
     expect(printBlock()).toMatch(/body\.sheet-open \.signoff-sheet\s*\{[^}]*display:\s*block/);
+  });
+});
+
+// ---------- Safety Program Report ----------
+
+describe('buildProgramReport — pure builder', () => {
+  const topics = [
+    pulseTopic('r1', 'Report One', 'Alpha'),
+    pulseTopic('r2', 'Report Two', 'Alpha'),
+    pulseTopic('r3', 'Report Three', 'Beta'),
+  ];
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+  });
+
+  it('returns zeroed, honest output for an empty log', () => {
+    const report = win.buildProgramReport([], topics, { preset: 'year' });
+    expect(report.rows).toEqual([]);
+    expect(report.summary.total).toBe(0);
+    expect(report.summary.first).toBeNull();
+    expect(report.summary.last).toBeNull();
+    expect(report.excludedDates).toBe(0);
+    expect(report.coverage.map((c) => c.category).sort()).toEqual(['Alpha', 'Beta']);
+    expect(report.coverage.every((c) => c.delivered === 0)).toBe(true);
+    expect(typeof report.label).toBe('string');
+    expect(report.label.length).toBeGreaterThan(0);
+  });
+
+  it('resolves the month preset to calendar-month bounds', () => {
+    const now = new Date();
+    const first = new Date(now.getFullYear(), now.getMonth(), 1);
+    const last = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    const before = new Date(now.getFullYear(), now.getMonth(), 0);
+    const after = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: localISO(first) },
+        { topicId: 'r2', date: localISO(last) },
+        { topicId: 'r3', date: localISO(before) },
+        { topicId: 'r1', date: localISO(after) },
+      ],
+      topics,
+      { preset: 'month' },
+    );
+    expect(report.rows.map((r) => r.date)).toEqual([localISO(first), localISO(last)]);
+    expect(report.summary.total).toBe(2);
+    expect(report.label).toContain('This month');
+    expect(report.label).toContain(localISO(first));
+    expect(report.label).toContain(localISO(last));
+  });
+
+  it('resolves the quarter preset to calendar-quarter boundaries', () => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const qm = Math.floor(now.getMonth() / 3) * 3; // quarter start month index
+    const qStart = new Date(y, qm, 1);
+    const qEnd = new Date(y, qm + 3, 0);
+    const dayBefore = new Date(y, qm, 0);
+    const dayAfter = new Date(y, qm + 3, 1);
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: localISO(qStart) },
+        { topicId: 'r2', date: localISO(qEnd) },
+        { topicId: 'r3', date: localISO(dayBefore) },
+        { topicId: 'r1', date: localISO(dayAfter) },
+      ],
+      topics,
+      { preset: 'quarter' },
+    );
+    expect(report.rows.map((r) => r.date)).toEqual([localISO(qStart), localISO(qEnd)]);
+    expect(report.label).toContain('This quarter');
+  });
+
+  it('resolves the year preset to calendar-year boundaries', () => {
+    const y = new Date().getFullYear();
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: `${y}-01-01` },
+        { topicId: 'r2', date: `${y}-12-31` },
+        { topicId: 'r3', date: `${y - 1}-12-31` },
+        { topicId: 'r1', date: `${y + 1}-01-01` },
+      ],
+      topics,
+      { preset: 'year' },
+    );
+    expect(report.rows.map((r) => r.date)).toEqual([`${y}-01-01`, `${y}-12-31`]);
+    expect(report.label).toContain('This year');
+    expect(report.label).toContain(`${y}-01-01`);
+    expect(report.label).toContain(`${y}-12-31`);
+  });
+
+  it('treats the all preset as unbounded with an All time label', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: '1999-01-01' },
+        { topicId: 'r2', date: win.todayISO() },
+      ],
+      topics,
+      { preset: 'all' },
+    );
+    expect(report.summary.total).toBe(2);
+    expect(report.from).toBeNull();
+    expect(report.to).toBeNull();
+    expect(report.label).toContain('All time');
+  });
+
+  it('filters custom ranges with inclusive from/to bounds', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: '2026-01-09' },
+        { topicId: 'r2', date: '2026-01-10' },
+        { topicId: 'r3', date: '2026-02-20' },
+        { topicId: 'r1', date: '2026-02-21' },
+      ],
+      topics,
+      { preset: 'custom', from: '2026-01-10', to: '2026-02-20' },
+    );
+    expect(report.rows.map((r) => r.date)).toEqual(['2026-01-10', '2026-02-20']);
+    expect(report.label).toContain('2026-01-10');
+    expect(report.label).toContain('2026-02-20');
+  });
+
+  it('yields empty rows deterministically when from is after to', () => {
+    const report = win.buildProgramReport(
+      [{ topicId: 'r1', date: '2026-02-15' }],
+      topics,
+      { preset: 'custom', from: '2026-03-01', to: '2026-02-01' },
+    );
+    expect(report.rows).toEqual([]);
+    expect(report.summary.total).toBe(0);
+    expect(report.summary.first).toBeNull();
+  });
+
+  it('treats an invalid custom bound as unbounded on that side', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: '1999-06-01' },
+        { topicId: 'r2', date: '2026-05-01' },
+        { topicId: 'r3', date: '2026-07-01' },
+      ],
+      topics,
+      { preset: 'custom', from: 'not-a-date', to: '2026-06-01' },
+    );
+    expect(report.rows.map((r) => r.date)).toEqual(['1999-06-01', '2026-05-01']);
+  });
+
+  it('treats an unrecognized preset as all time', () => {
+    const report = win.buildProgramReport(
+      [{ topicId: 'r1', date: '2001-01-01' }],
+      topics,
+      { preset: 'week' },
+    );
+    expect(report.summary.total).toBe(1);
+    expect(report.label).toContain('All time');
+  });
+
+  it('treats a missing range as all time and never throws', () => {
+    const report = win.buildProgramReport([{ topicId: 'r1', date: '2001-01-01' }], topics, undefined);
+    expect(report.summary.total).toBe(1);
+  });
+
+  it('renders unknown topic ids as catalog-removed rows counted in totals', () => {
+    const report = win.buildProgramReport([{ topicId: 'ghost', date: win.todayISO() }], topics, {
+      preset: 'all',
+    });
+    expect(report.rows).toEqual([
+      { date: win.todayISO(), topicId: 'ghost', topicTitle: '(topic no longer in catalog)', category: '—' },
+    ]);
+    expect(report.summary.total).toBe(1);
+    expect(report.coverage.every((c) => c.delivered === 0)).toBe(true);
+  });
+
+  it('excludes malformed-date entries with a visible count, never silently', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: 'not-a-date' },
+        { topicId: 'r2', date: '2026/01/02' },
+        { topicId: 'r3', date: 12345 },
+        { topicId: 'r1', date: win.todayISO() },
+      ],
+      topics,
+      { preset: 'all' },
+    );
+    expect(report.excludedDates).toBe(3);
+    expect(report.rows.map((r) => r.date)).toEqual([win.todayISO()]);
+    expect(report.summary.total).toBe(1);
+  });
+
+  it('ignores entries without a string topicId entirely (Pulse convention)', () => {
+    const report = win.buildProgramReport(
+      [null, { date: '2026-01-01' }, { topicId: 42, date: '2026-01-01' }],
+      topics,
+      { preset: 'all' },
+    );
+    expect(report.rows).toEqual([]);
+    expect(report.summary.total).toBe(0);
+    expect(report.excludedDates).toBe(0);
+  });
+
+  it('sorts rows chronologically with stable same-date order (log order)', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r2', date: '2026-03-02' },
+        { topicId: 'r1', date: '2026-01-01' },
+        { topicId: 'r3', date: '2026-03-02' },
+        { topicId: 'r2', date: '2026-02-01' },
+      ],
+      topics,
+      { preset: 'all' },
+    );
+    expect(report.rows.map((r) => r.topicId)).toEqual(['r1', 'r2', 'r2', 'r3']);
+    expect(report.summary.first).toBe('2026-01-01');
+    expect(report.summary.last).toBe('2026-03-02');
+  });
+
+  it('scopes coverage to the range: out-of-range deliveries do not count', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 'r1', date: '2025-12-31' },
+        { topicId: 'r3', date: '2026-06-01' },
+      ],
+      topics,
+      { preset: 'custom', from: '2026-01-01', to: '2026-12-31' },
+    );
+    const alpha = report.coverage.find((c) => c.category === 'Alpha');
+    const beta = report.coverage.find((c) => c.category === 'Beta');
+    expect(alpha).toEqual({ category: 'Alpha', delivered: 0, total: 2, lastDate: null });
+    expect(beta).toEqual({ category: 'Beta', delivered: 1, total: 1, lastDate: '2026-06-01' });
+  });
+
+  it('never mutates its inputs and is deterministic across calls', () => {
+    const log = [
+      { topicId: 'r1', date: win.todayISO() },
+      { topicId: 'ghost', date: 'bad-date' },
+    ];
+    const topicsCopy = topics.map((t) => ({ ...t }));
+    const range = { preset: 'year' };
+    const r1 = win.buildProgramReport(log, topics, range);
+    const r2 = win.buildProgramReport(log, topics, range);
+    expect(r2).toEqual(r1);
+    expect(log).toEqual([
+      { topicId: 'r1', date: win.todayISO() },
+      { topicId: 'ghost', date: 'bad-date' },
+    ]);
+    expect(topics).toEqual(topicsCopy);
+    expect(range).toEqual({ preset: 'year' });
+  });
+
+  it('never throws on null or non-array inputs', () => {
+    expect(() => win.buildProgramReport(null, null, null)).not.toThrow();
+    const report = win.buildProgramReport(null, null, null);
+    expect(report.rows).toEqual([]);
+    expect(report.summary.total).toBe(0);
+    expect(report.coverage).toEqual([]);
+  });
+});
+
+describe('escapeCsvCell — RFC 4180 escaping', () => {
+  it('leaves plain values unchanged', () => {
+    expect(win.escapeCsvCell('plain')).toBe('plain');
+  });
+
+  it('quotes values containing commas', () => {
+    expect(win.escapeCsvCell('a,b')).toBe('"a,b"');
+  });
+
+  it('quotes values containing quotes and doubles them', () => {
+    expect(win.escapeCsvCell('say "hi"')).toBe('"say ""hi"""');
+  });
+
+  it('quotes values containing newlines', () => {
+    expect(win.escapeCsvCell('line1\nline2')).toBe('"line1\nline2"');
+  });
+
+  it('quotes values containing carriage returns', () => {
+    expect(win.escapeCsvCell('a\rb')).toBe('"a\rb"');
+  });
+
+  it('returns empty string for null and undefined', () => {
+    expect(win.escapeCsvCell(null)).toBe('');
+    expect(win.escapeCsvCell(undefined)).toBe('');
+  });
+
+  it('wraps a combined hostile value exactly once with doubled quotes', () => {
+    expect(win.escapeCsvCell('a,"b"\nc')).toBe('"a,""b""\nc"');
+  });
+});
+
+describe('buildProgramReportCsv — serialization', () => {
+  it('prefixes a UTF-8 BOM, exact header, and CRLF-only line endings', () => {
+    const report = win.buildProgramReport(
+      [{ topicId: 't2', date: '2026-06-01' }],
+      [pulseTopic('t2', 'Topic Two', 'Beta')],
+      { preset: 'all' },
+    );
+    const csv = win.buildProgramReportCsv(report);
+    expect(csv.charCodeAt(0)).toBe(0xfeff);
+    expect(csv.slice(1)).toMatch(/^Date,Topic,Category,Topic ID\r\n/);
+    // Every newline is a CRLF (no bare LF)
+    expect(csv.replace(/\r\n/g, '')).not.toContain('\n');
+  });
+
+  it('writes one row per delivery with RFC 4180-escaped cells', () => {
+    const report = win.buildProgramReport(
+      [
+        { topicId: 't1', date: '2026-06-02' },
+        { topicId: 't2', date: '2026-06-01' },
+      ],
+      [pulseTopic('t1', 'Topic, One', 'Alpha'), pulseTopic('t2', 'Topic Two', 'Beta')],
+      { preset: 'all' },
+    );
+    const csv = win.buildProgramReportCsv(report);
+    expect(csv).toContain('\uFEFFDate,Topic,Category,Topic ID\r\n');
+    expect(csv).toContain('2026-06-01,Topic Two,Beta,t2\r\n');
+    expect(csv).toContain('2026-06-02,"Topic, One",Alpha,t1\r\n');
+  });
+
+  it('produces header-only CSV for an empty report', () => {
+    const csv = win.buildProgramReportCsv(win.buildProgramReport([], [], { preset: 'all' }));
+    expect(csv).toBe('\uFEFFDate,Topic,Category,Topic ID\r\n');
+  });
+});
+
+describe('exportProgramReportCsv — download flow', () => {
+  /** Installs stubs for the download pipeline and returns undo + spies. */
+  function stubDownload() {
+    const origCreateObjectURL = win.URL.createObjectURL;
+    const origRevokeObjectURL = win.URL.revokeObjectURL;
+    const origClick = win.HTMLAnchorElement.prototype.click;
+    const createObjectURL = vi.fn(() => 'blob:mock-url');
+    const revokeObjectURL = vi.fn();
+    const click = vi.fn();
+    win.URL.createObjectURL = createObjectURL;
+    win.URL.revokeObjectURL = revokeObjectURL;
+    win.HTMLAnchorElement.prototype.click = click;
+    return {
+      createObjectURL,
+      revokeObjectURL,
+      click,
+      undo() {
+        win.URL.createObjectURL = origCreateObjectURL;
+        win.URL.revokeObjectURL = origRevokeObjectURL;
+        win.HTMLAnchorElement.prototype.click = origClick;
+      },
+    };
+  }
+
+  it('downloads synchronously with the conventional filename and revokes the URL', () => {
+    const stubs = stubDownload();
+    try {
+      win.exportProgramReportCsv(
+        win.buildProgramReport([{ topicId: 't1', date: win.todayISO() }], [pulseTopic('t1', 'One', 'A')], { preset: 'all' }),
+      );
+      expect(stubs.click).toHaveBeenCalledTimes(1);
+      expect(stubs.createObjectURL).toHaveBeenCalledTimes(1);
+      const blob = stubs.createObjectURL.mock.calls[0][0];
+      expect(blob).toBeInstanceOf(win.Blob);
+      expect(blob.type).toContain('text/csv');
+      expect(stubs.revokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
+      // The temporary anchor carried the download name and blob URL
+      expect(stubs.click.mock.instances[0].download).toBe(`safety-talk-program-report-${win.todayISO()}.csv`);
+      expect(stubs.click.mock.instances[0].href).toBe('blob:mock-url');
+      expect(document.getElementById('toast').textContent).toMatch(/CSV/i);
+    } finally {
+      stubs.undo();
+    }
+  });
+
+  it('shows a descriptive toast when Blob is unsupported (never silent)', () => {
+    const stubs = stubDownload();
+    const origBlob = win.Blob;
+    win.Blob = undefined;
+    try {
+      expect(() => win.exportProgramReportCsv({ rows: [] })).not.toThrow();
+      expect(stubs.createObjectURL).not.toHaveBeenCalled();
+      expect(document.getElementById('toast').textContent).toMatch(/CSV export unavailable/i);
+      expect(document.getElementById('toast').textContent).toMatch(/Blob/i);
+    } finally {
+      win.Blob = origBlob;
+      stubs.undo();
+    }
+  });
+
+  it('shows a descriptive toast when object URLs are unsupported', () => {
+    const origCreateObjectURL = win.URL.createObjectURL;
+    win.URL.createObjectURL = undefined;
+    try {
+      win.exportProgramReportCsv({ rows: [] });
+      expect(document.getElementById('toast').textContent).toMatch(/object URL/i);
+      expect(document.getElementById('toast').textContent).toMatch(/CSV export unavailable/i);
+    } finally {
+      win.URL.createObjectURL = origCreateObjectURL;
+    }
+  });
+
+  it('removes the temporary anchor even when click() throws', () => {
+    const stubs = stubDownload();
+    stubs.click.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const warn = vi.spyOn(win.console, 'warn').mockImplementation(() => {});
+    try {
+      expect(() => win.exportProgramReportCsv({ rows: [] })).not.toThrow();
+      expect(warn).toHaveBeenCalled();
+      // The anchor must not leak into the DOM on the failure path.
+      expect(document.querySelector('a[download]')).toBeNull();
+      expect(document.getElementById('toast').textContent).toMatch(/CSV export failed/i);
+    } finally {
+      warn.mockRestore();
+      stubs.undo();
+    }
+  });
+
+  it('warns via console.warn and toasts when createObjectURL throws', () => {
+    const warn = vi.spyOn(win.console, 'warn').mockImplementation(() => {});
+    const origCreateObjectURL = win.URL.createObjectURL;
+    win.URL.createObjectURL = () => {
+      throw new Error('quota');
+    };
+    const origRevokeObjectURL = win.URL.revokeObjectURL;
+    const revokeObjectURL = vi.fn();
+    win.URL.revokeObjectURL = revokeObjectURL;
+    try {
+      expect(() => win.exportProgramReportCsv({ rows: [] })).not.toThrow();
+      expect(warn).toHaveBeenCalled();
+      expect(document.getElementById('toast').textContent).toMatch(/CSV export failed/i);
+      expect(revokeObjectURL).not.toHaveBeenCalled();
+    } finally {
+      win.URL.createObjectURL = origCreateObjectURL;
+      win.URL.revokeObjectURL = origRevokeObjectURL;
+      warn.mockRestore();
+    }
+  });
+});
+
+describe('program report overlay', () => {
+  const topic = pulseTopic('ov1', 'Overlay Topic', 'Alpha');
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+    });
+  });
+
+  afterEach(() => {
+    document.body.classList.remove('report-open');
+    document.body.classList.remove('sheet-open');
+    const report = document.getElementById('program-report');
+    if (report) report.innerHTML = '';
+    document.getElementById('signoff-sheet').innerHTML = '';
+    win.history.replaceState(null, '', ' ');
+  });
+
+  it('assertDomElements requires #program-report', () => {
+    const orig = win.document.getElementById.bind(win.document);
+    win.document.getElementById = /** @type {any} */ ((id) => {
+      if (id === 'program-report') return null;
+      return orig(id);
+    });
+    expect(() => win.assertDomElements()).toThrow(/program-report.*not found/i);
+    win.document.getElementById = /** @type {any} */ (orig);
+  });
+
+  it('opens from the Pulse button with report-open and a This year default', () => {
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    expect(document.body.classList.contains('report-open')).toBe(true);
+    const section = document.getElementById('program-report');
+    expect(section.textContent).toContain('Safety Talk Program Report');
+    expect(section.textContent).toContain(`Generated: ${win.todayISO()}`);
+    expect(document.getElementById('report-range-preset').value).toBe('year');
+  });
+
+  it('Close removes report-open and clears the section', () => {
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    document.getElementById('report-close-btn').click();
+    expect(document.body.classList.contains('report-open')).toBe(false);
+    expect(document.getElementById('program-report').innerHTML).toBe('');
+  });
+
+  it('shows an honest empty state for an empty log', () => {
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    expect(document.getElementById('program-report').textContent).toMatch(/No safety talks were recorded in this period/i);
+  });
+
+  it('renders the informational cadence line and honest footer language', () => {
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'ov1', date: win.todayISO() }],
+    });
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    const text = document.getElementById('program-report').textContent;
+    expect(text).toContain('State cadence floors, when they apply: CA every 10 working days; WA weekly; OR monthly. No federal mandate.');
+    expect(text).toContain('keep at least 1 year (CA/WA floors)');
+    expect(text).toContain("Cal/OSHA's enforcement posture for employers with 10+ employees is 3 years");
+    expect(text).toContain('Attendance names and signatures: see Safety Talk Records on file.');
+    expect(text).toContain('Always defer to your site-specific safety procedures.');
+    // Delivery table with the seeded talk
+    expect(text).toContain('Overlay Topic');
+    // Coverage summary mirrors the ledger shape (ov1 delivered today)
+    expect(text).toContain('1/1 delivered');
+  });
+
+  it('contains no compliance verdicts or streak/gamification language', () => {
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'ov1', date: win.todayISO() }],
+    });
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    const html = document.getElementById('program-report').innerHTML;
+    expect(html).not.toMatch(/compliant/i);
+    expect(html).not.toMatch(/streak/i);
+  });
+
+  it('surfaces a singular excluded-entries note when one date is malformed', () => {
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'ov1', date: 'oops' }],
+    });
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    expect(document.getElementById('program-report').textContent).toContain(
+      '1 entry with an unrecognizable date was excluded',
+    );
+  });
+
+  it('surfaces a plural excluded-entries note for multiple malformed dates', () => {
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [
+        { topicId: 'ov1', date: 'oops' },
+        { topicId: 'ov1', date: '2026/13/99' },
+      ],
+    });
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    expect(document.getElementById('program-report').textContent).toContain(
+      '2 entries with unrecognizable dates were excluded',
+    );
+  });
+
+  it('main Print button never prints the report', () => {
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    expect(document.body.classList.contains('report-open')).toBe(true);
+    let reportOpenAtPrint = null;
+    win.print = () => {
+      reportOpenAtPrint = document.body.classList.contains('report-open');
+    };
+    document.getElementById('print-btn').click();
+    expect(reportOpenAtPrint).toBe(false);
+    expect(document.body.classList.contains('report-open')).toBe(false);
+    expect(document.getElementById('program-report').innerHTML).toBe('');
+  });
+
+  it('sign-off sheet flow closes the report before printing', () => {
+    win.history.replaceState(null, '', '#ov1');
+    let reportOpenAtPrint = null;
+    let sheetOpenAtPrint = null;
+    win.print = () => {
+      reportOpenAtPrint = document.body.classList.contains('report-open');
+      sheetOpenAtPrint = document.body.classList.contains('sheet-open');
+    };
+    sft.renderProgramPulse();
+    document.getElementById('report-open-btn').click();
+    document.getElementById('signoff-btn').click();
+    // body.report-open print rules beat the sheet's, so the report must
+    // be closed and only the sheet open when window.print() runs.
+    expect(reportOpenAtPrint).toBe(false);
+    expect(sheetOpenAtPrint).toBe(true);
+    expect(document.body.classList.contains('report-open')).toBe(false);
+    expect(document.body.classList.contains('sheet-open')).toBe(true);
+    // afterprint closes the sheet; the report was already closed at print
+    win.dispatchEvent(new win.Event('afterprint'));
+    expect(document.body.classList.contains('sheet-open')).toBe(false);
+    expect(document.body.classList.contains('report-open')).toBe(false);
+    expect(document.getElementById('signoff-sheet').innerHTML).toBe('');
+  });
+});
+
+describe('program report range wiring', () => {
+  const topic = pulseTopic('rw1', 'Range Topic', 'Alpha');
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    const now = new Date();
+    const beforeThisMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [
+        { topicId: 'rw1', date: win.todayISO() },
+        { topicId: 'rw1', date: localISO(beforeThisMonth) },
+      ],
+    });
+    sft.renderProgramPulse();
+  });
+
+  afterEach(() => {
+    document.body.classList.remove('report-open');
+    const report = document.getElementById('program-report');
+    if (report) report.innerHTML = '';
+  });
+
+  it('changing preset re-renders in place and stays open', () => {
+    document.getElementById('report-open-btn').click();
+    // Default This year: both entries (today + last month) are in-year
+    expect(document.querySelectorAll('#program-report .report-table tbody tr')).toHaveLength(2);
+    const select = document.getElementById('report-range-preset');
+    select.value = 'month';
+    select.dispatchEvent(new win.Event('change'));
+    expect(document.body.classList.contains('report-open')).toBe(true);
+    expect(document.querySelectorAll('#program-report .report-table tbody tr')).toHaveLength(1);
+    expect(document.getElementById('report-range-preset').value).toBe('month');
+    expect(document.getElementById('program-report').textContent).toContain('This month');
+  });
+
+  it('custom from/to inputs filter rows', () => {
+    document.getElementById('report-open-btn').click();
+    const select = document.getElementById('report-range-preset');
+    select.value = 'custom';
+    select.dispatchEvent(new win.Event('change'));
+    // Re-render on preset change: re-query the fresh inputs.
+    let from = document.getElementById('report-from');
+    let to = document.getElementById('report-to');
+    expect(from.disabled).toBe(false);
+    expect(to.disabled).toBe(false);
+    from.value = '2026-01-01';
+    to.value = win.todayISO();
+    to.dispatchEvent(new win.Event('change'));
+    expect(document.querySelectorAll('#program-report .report-table tbody tr')).toHaveLength(2);
+    expect(document.getElementById('program-report').textContent).toContain('Custom range');
+    // Narrow from to exclude the older entry (inputs re-render on each
+    // change, so re-query before editing again).
+    const earlier = new Date();
+    earlier.setDate(earlier.getDate() - 1);
+    from = document.getElementById('report-from');
+    from.value = localISO(earlier);
+    from.dispatchEvent(new win.Event('change'));
+    expect(document.querySelectorAll('#program-report .report-table tbody tr')).toHaveLength(1);
+  });
+
+  it('re-renders live on logTalk with the range selection preserved', () => {
+    // Show the topic card first: showTopic clears stale report-open
+    // state, so the card must exist before the report is opened.
+    sft.showTopic(topic, false);
+    document.getElementById('report-open-btn').click();
+    const select = document.getElementById('report-range-preset');
+    select.value = 'month';
+    select.dispatchEvent(new win.Event('change'));
+    expect(document.querySelectorAll('#program-report .report-table tbody tr')).toHaveLength(1);
+    // A new logged talk lands in the current month → appears immediately
+    document.getElementById('use-this-btn').click();
+    expect(document.body.classList.contains('report-open')).toBe(true);
+    const rows = document.querySelectorAll('#program-report .report-table tbody tr');
+    expect(rows).toHaveLength(2);
+    expect(document.getElementById('program-report').textContent).toContain('Range Topic');
+    expect(document.getElementById('report-range-preset').value).toBe('month');
+  });
+
+  it('reopening the report resets the range to This year', () => {
+    document.getElementById('report-open-btn').click();
+    const select = document.getElementById('report-range-preset');
+    select.value = 'custom';
+    select.dispatchEvent(new win.Event('change'));
+    expect(document.getElementById('report-range-preset').value).toBe('custom');
+    document.getElementById('report-close-btn').click();
+    expect(document.body.classList.contains('report-open')).toBe(false);
+    document.getElementById('report-open-btn').click();
+    expect(document.body.classList.contains('report-open')).toBe(true);
+    expect(document.getElementById('report-range-preset').value).toBe('year');
+    expect(document.getElementById('program-report').textContent).toContain('This year');
+    expect(document.getElementById('report-from').disabled).toBe(true);
+    expect(document.getElementById('report-to').disabled).toBe(true);
+  });
+
+  it('keeps focus on the preset select across a range change', () => {
+    document.getElementById('report-open-btn').click();
+    const select = document.getElementById('report-range-preset');
+    select.focus();
+    expect(document.activeElement).toBe(select);
+    select.value = 'month';
+    select.dispatchEvent(new win.Event('change'));
+    // The controls stay mounted on range changes, so the firing select
+    // keeps focus (screen readers keep their announcement context).
+    expect(document.activeElement).toBe(select);
+  });
+
+  it('does not rebuild the hidden report on logTalk when the overlay is closed', () => {
+    // Show the topic card first: showTopic clears stale report-open state.
+    sft.showTopic(topic, false);
+    expect(document.body.classList.contains('report-open')).toBe(false);
+    document.getElementById('use-this-btn').click();
+    // logTalk must leave #program-report cleared when nothing is open.
+    expect(document.getElementById('program-report').innerHTML).toBe('');
+  });
+});
+
+describe('print — program report CSS', () => {
+  const printBlock = () => {
+    const css = fs.readFileSync(path.resolve('./style.css'), 'utf8');
+    const idx = css.indexOf('@media print');
+    expect(idx).toBeGreaterThan(-1);
+    return css.slice(idx);
+  };
+
+  it('hides #program-report in print by default', () => {
+    expect(printBlock()).toMatch(/#program-report\s*\{[^}]*display:\s*none\s*!important/);
+  });
+
+  it('shows only the report when body.report-open (main app hidden)', () => {
+    const css = printBlock();
+    expect(css).toMatch(/body\.report-open #program-report\s*\{[^}]*display:\s*block/);
+    expect(css).toMatch(/body\.report-open \.site-header[^{]*\{[^}]*display:\s*none/);
+    expect(css).toMatch(/body\.report-open \.topic-card[^{]*\{[^}]*display:\s*none/);
+    expect(css).toMatch(/body\.report-open #program-pulse[^{]*\{[^}]*display:\s*none/);
+  });
+
+  it('never prints the report range controls', () => {
+    expect(printBlock()).toMatch(/body\.report-open \.report-controls\s*\{[^}]*display:\s*none/);
   });
 });
