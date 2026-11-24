@@ -16,6 +16,7 @@ Click **Get a Topic** and you get a concise, ready-to-read safety brief: a title
 - Shows a **Safety Program Pulse** — talk counts, days since your last recorded talk, per-category coverage, and a suggested next topic — so you can keep the program consistent instead of just picking blind
 - Produces a **Safety Program Report** — a printable, date-range-filtered summary of every recorded talk (delivery table plus per-category coverage), with a CSV export — the page you can hand to an inspector, GC, or HR when they ask what your program has covered
 - Browse with delivery status — the library page marks each topic **Never delivered** or **Last delivered** with a count, and a status select filters to never-delivered topics or sorts the library by neglect, so you pick the next talk knowing what your program has already covered
+- **Works offline, installable** — install it to a phone's home screen once (over HTTPS or localhost) and the whole app opens, runs, records, and prints with no signal on the jobsite
 
 ## Categories
 
@@ -43,8 +44,22 @@ browse.html       # searchable full list
 app.js            # app logic
 style.css         # styles
 topics-data.js    # the topic library
+delivery-data.js  # shared delivery-status helper
 server.js         # lightweight dev server (optional)
+pwa.js            # guarded service-worker registration
+sw.js             # offline service worker (cache + version)
+pwa-assets.js     # precache asset list (shared by sw.js and tests)
+manifest.webmanifest / icon.svg  # install metadata + icon
 ```
+
+## Offline & installable
+
+On GitHub Pages (or any HTTPS host) the app registers a service worker that precaches the whole site, so after one online visit it opens and works fully offline — job sites with no signal included. Use **Add to Home Screen / Install app** from your browser menu to launch it standalone.
+
+Two notes:
+
+- Opened straight from `file://` or plain `http://` (not localhost), the offline layer stays completely out of the way — nothing registers, nothing changes.
+- Installing to the home screen also stops Safari from auto-clearing the app's local storage after a week of disuse (WebKit's Intelligent Tracking Prevention deletes site data for non-installed sites; installed web apps are exempt).
 
 ## Development
 

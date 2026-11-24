@@ -27,3 +27,4 @@ Back-accumulated deferred and future work for the SafetyTopic project.
 
 - **`data-complete` attribute** — mark topics as fully loaded/processed to allow UI state to reflect loaded vs. error vs. empty states more explicitly
 - **`execCommand` fallback headless test** — add a headless test that exercises the non-secure-context clipboard path
+- **Meeting-log backup/restore** — export the `meetingLog` + `usedTopics` localStorage keys as a JSON file and import it back with defensive parsing, so a device switch or browser-data wipe doesn't destroy the recorded program history. Loop-6 research verified the record duty (8 CCR §3203(b)(2), ≥1 year) and that the iOS 7-day eviction threat is now covered by the home-screen install exemption; this is the remaining durability gap and the strongest loop-7 candidate.

@@ -35,8 +35,18 @@ Use this to decide where to make changes:
 - `app.js` — main app behavior (topic selection, filters, copy, print, used-tracking)
 - `topics-data.js` — topic content/data
 - `server.js` — lightweight local development server only
+- `delivery-data.js` — shared delivery-status helper (browse + app)
+- `pwa.js` — guarded service-worker registration (no-op on file:// and plain non-localhost HTTP)
+- `sw.js` — offline service worker; owns `PWA_CACHE_VERSION`
+- `pwa-assets.js` — precache asset list, shared by `sw.js` and tests
+- `manifest.webmanifest` / `icon.svg` — install metadata and icon
+
 - `CHANGELOG.md` — unreleased and release notes
 - `README.md` — user-facing setup and project documentation
+
+### Offline cache rule
+
+- Bump `PWA_CACHE_VERSION` in `sw.js` whenever any file in the `PWA_PRECACHE_ASSETS` list changes (or the list itself changes). The version must live in `sw.js`: the browser only reinstalls a service worker when `sw.js`'s own bytes change, so a version bump elsewhere never propagates. Old caches are deleted on activation.
 
 ## Editing guidance
 

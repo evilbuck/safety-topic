@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- SafetyTopic brand icon: brand mark kept inside a ~20% maskable safe
+       zone (102px margin) so the maskable variant crops cleanly. -->
+  <rect x="0" y="0" width="512" height="512" rx="96" fill="#0096C7"/>
+  <text x="256" y="256" text-anchor="middle" dominant-baseline="central"
+        font-family="system-ui, -apple-system, sans-serif" font-size="256"
+        fill="#ffffff">✦</text>
+</svg>
