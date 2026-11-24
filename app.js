@@ -115,6 +115,7 @@ function assertDomElements() {
     'brand-link',
     'signoff-sheet',
     'signoff-btn',
+    'program-pulse',
   ];
   for (const id of required) {
     const el =
@@ -123,8 +124,7 @@ function assertDomElements() {
       null;
     if (!el) {
       throw new Error(
-        `SafetyTopic init failed: #${id} not found in DOM. " +
-          "Check that index.html includes all required elements.`,
+        `SafetyTopic init failed: #${id} not found in DOM. Check that index.html includes all required elements.`,
       );
     }
   }
@@ -237,6 +237,7 @@ function init() {
   restoreFilterState();
   wireEvents();
   loadInitialTopic();
+  renderProgramPulse();
 }
 
 // ---------- Boot ----------
@@ -495,9 +496,10 @@ function todayISO() {
 
 /**
  * Appends a dated entry ({ topicId, date }) to the meeting log and
- * persists it to localStorage under the `meetingLog` key. Never
- * throws: storage failures are reported via console.warn and the
- * in-memory log is still updated.
+ * persists it to localStorage under the `meetingLog` key, then
+ * re-renders the program pulse so the dashboard reflects the new
+ * entry immediately. Never throws: storage failures are reported via
+ * console.warn and the in-memory log is still updated.
  * @param {string} topicId - The ID of the delivered topic.
  */
 function logTalk(topicId) {
@@ -506,6 +508,353 @@ function logTalk(topicId) {
     localStorage.setItem("meetingLog", JSON.stringify(meetingLog));
   } catch (err) {
     console.warn("[SafetyTopic] Could not persist meeting log:", err);
+  }
+  renderProgramPulse();
+}
+
+// ---------- Program Pulse ----------
+/** Matches strict YYYY-MM-DD calendar date strings. */
+const PULSE_ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Returns the number of whole calendar days between an ISO date
+ * (YYYY-MM-DD) and today. Dates in the future (e.g. from clock skew
+ * or hand-edited logs) clamp to 0. Input is expected to already match
+ * the YYYY-MM-DD shape; callers validate before calling.
+ * @param {string} dateStr - ISO date, e.g. "2026-11-24".
+ * @returns {number} Whole days elapsed, minimum 0.
+ */
+function daysSince(dateStr) {
+  const toUTC = (s) =>
+    Date.UTC(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+  const diff = Math.floor((toUTC(todayISO()) - toUTC(dateStr)) / 86400000);
+  return diff < 0 ? 0 : diff;
+}
+
+/**
+ * Pure computation of Safety Program Pulse statistics from a meeting
+ * log and the topic catalog. Never throws on malformed input: entries
+ * without a string topicId are ignored entirely; entries whose date is
+ * not an ISO YYYY-MM-DD string still count toward `total` but are
+ * excluded from every date-derived field; log ids absent from the
+ * catalog count toward `total`/`thisMonth`/recency but are excluded
+ * from the category ledger. Neither input is mutated.
+ * @param {{ topicId: string, date: string }[]} log - The meeting log.
+ * @param {Topic[]} topics - The topic catalog.
+ * @returns {{ total: number, thisMonth: number, lastDate: string | null,
+ *   lastTopicTitle: string | null,
+ *   coverage: { category: string, delivered: number, total: number,
+ *     lastDate: string | null }[],
+ *   recent: { topicId: string, title: string | null, date: string }[] }}
+ *   Coverage holds one row per catalog category, sorted never-delivered
+ *   first, then oldest last-delivered first (category-name tie-break).
+ *   `recent` is sorted newest-first and capped at 5 entries.
+ */
+function computeProgramStats(log, topics) {
+  const safeLog = Array.isArray(log) ? log : [];
+  const safeTopics = Array.isArray(topics) ? topics : [];
+
+  const topicById = new Map();
+  for (const t of safeTopics) {
+    if (t && typeof t.id === "string" && !topicById.has(t.id)) {
+      topicById.set(t.id, t);
+    }
+  }
+
+  const catTotals = new Map();
+  const catDelivered = new Map();
+  const catLastDate = new Map();
+  for (const t of safeTopics) {
+    if (!t || typeof t.category !== "string") continue;
+    catTotals.set(t.category, (catTotals.get(t.category) || 0) + 1);
+    if (!catDelivered.has(t.category)) catDelivered.set(t.category, new Set());
+    if (!catLastDate.has(t.category)) catLastDate.set(t.category, null);
+  }
+
+  let total = 0;
+  let thisMonth = 0;
+  let lastEntry = null;
+  const monthPrefix = todayISO().slice(0, 7);
+
+  for (const entry of safeLog) {
+    if (!entry || typeof entry.topicId !== "string") continue;
+    total += 1;
+    const dateOk =
+      typeof entry.date === "string" && PULSE_ISO_DATE_RE.test(entry.date);
+    if (dateOk) {
+      if (entry.date.slice(0, 7) === monthPrefix) thisMonth += 1;
+      if (!lastEntry || entry.date >= lastEntry.date) lastEntry = entry;
+    }
+    const topic = topicById.get(entry.topicId);
+    if (!topic || typeof topic.category !== "string") continue;
+    /** @type {Set<string>} */ (catDelivered.get(topic.category)).add(topic.id);
+    if (dateOk) {
+      const prev = catLastDate.get(topic.category);
+      if (prev === null || entry.date > prev) {
+        catLastDate.set(topic.category, entry.date);
+      }
+    }
+  }
+
+  const coverage = [...catTotals.entries()].map(([category, catTotal]) => ({
+    category,
+    delivered: /** @type {Set<string>} */ (catDelivered.get(category)).size,
+    total: catTotal,
+    lastDate: catLastDate.get(category) ?? null,
+  }));
+  coverage.sort((a, b) => {
+    const aKey = a.lastDate ?? "";
+    const bKey = b.lastDate ?? "";
+    if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+    return a.category < b.category ? -1 : a.category > b.category ? 1 : 0;
+  });
+
+  const recent = safeLog
+    .filter(
+      (e) =>
+        e &&
+        typeof e.topicId === "string" &&
+        typeof e.date === "string" &&
+        PULSE_ISO_DATE_RE.test(e.date),
+    )
+    // reverse() first so equal-date ties keep newest-appended order
+    // (the filter result is a fresh array, so the input is not mutated).
+    .reverse()
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    .slice(0, 5)
+    .map((e) => ({
+      topicId: e.topicId,
+      title: topicById.get(e.topicId)?.title ?? null,
+      date: e.date,
+    }));
+
+  return {
+    total,
+    thisMonth,
+    lastDate: lastEntry ? lastEntry.date : null,
+    lastTopicTitle: lastEntry
+      ? topicById.get(lastEntry.topicId)?.title ?? null
+      : null,
+    coverage,
+    recent,
+  };
+}
+
+/**
+ * Pure, deterministic suggestion of the next topic to deliver.
+ * Never-delivered topics win first: the candidate comes from the
+ * category whose last-delivered date is the oldest (a category with no
+ * deliveries at all counts as the most neglected), tie-broken by
+ * category name, then alphabetically by topic id. When every catalog
+ * topic has been delivered, the topic with the globally oldest
+ * last-delivered date wins (alphabetical id tie-break). The suggestion
+ * is global: it ignores the current category filter. Unknown log ids
+ * are ignored — they neither mark catalog topics as delivered nor
+ * contribute category dates. Neither input is mutated.
+ * @param {{ topicId: string, date: string }[]} log - The meeting log.
+ * @param {Topic[]} topics - The topic catalog.
+ * @returns {{ topic: Topic, reason: string } | null} The suggestion
+ *   with an informational reason, or null when there is nothing to
+ *   suggest (empty catalog, or no usable dates in the all-delivered
+ *   case).
+ */
+function suggestNextTopic(log, topics) {
+  const safeLog = Array.isArray(log) ? log : [];
+  const catalogTopics = (Array.isArray(topics) ? topics : []).filter(
+    (t) => t && typeof t.id === "string" && typeof t.category === "string",
+  );
+  if (catalogTopics.length === 0) return null;
+
+  const topicById = new Map(catalogTopics.map((t) => [t.id, t]));
+  const validEntries = safeLog.filter(
+    (e) =>
+      e &&
+      typeof e.topicId === "string" &&
+      typeof e.date === "string" &&
+      PULSE_ISO_DATE_RE.test(e.date) &&
+      topicById.has(e.topicId),
+  );
+
+  // "Never delivered" means zero log entries for the topic id — any
+  // entry counts, even one with a malformed date.
+  const deliveredIds = new Set();
+  for (const e of safeLog) {
+    if (e && typeof e.topicId === "string") deliveredIds.add(e.topicId);
+  }
+  const neverDelivered = catalogTopics.filter((t) => !deliveredIds.has(t.id));
+
+  if (neverDelivered.length > 0) {
+    // Latest delivery date per category, across all its catalog topics.
+    const catLastDate = new Map();
+    for (const entry of validEntries) {
+      const category = /** @type {Topic} */ (topicById.get(entry.topicId)).category;
+      const prev = catLastDate.get(category);
+      if (prev === undefined || entry.date > prev) {
+        catLastDate.set(category, entry.date);
+      }
+    }
+
+    // Categories that still have a never-delivered topic, ranked by
+    // neglect: absent date first (""> no date sorts before any date),
+    // then oldest date, then category name.
+    const candidateCats = [...new Set(neverDelivered.map((t) => t.category))];
+    candidateCats.sort((a, b) => {
+      const aDate = catLastDate.get(a) ?? "";
+      const bDate = catLastDate.get(b) ?? "";
+      if (aDate !== bDate) return aDate < bDate ? -1 : 1;
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    const chosenCat = candidateCats[0];
+    const chosenCatDate = catLastDate.get(chosenCat) ?? null;
+    const picks = neverDelivered
+      .filter((t) => t.category === chosenCat)
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    return {
+      topic: picks[0],
+      reason: chosenCatDate
+        ? `Never delivered — your ${chosenCat} category was last covered ${chosenCatDate}`
+        : `Never delivered — your ${chosenCat} category has no talks recorded yet`,
+    };
+  }
+
+  // All catalog topics delivered: globally oldest last-delivered date wins.
+  const lastByTopic = new Map();
+  for (const entry of validEntries) {
+    const prev = lastByTopic.get(entry.topicId);
+    if (prev === undefined || entry.date > prev) {
+      lastByTopic.set(entry.topicId, entry.date);
+    }
+  }
+  const candidates = catalogTopics
+    .filter((t) => lastByTopic.has(t.id))
+    .sort((a, b) => {
+      const aDate = /** @type {string} */ (lastByTopic.get(a.id));
+      const bDate = /** @type {string} */ (lastByTopic.get(b.id));
+      if (aDate !== bDate) return aDate < bDate ? -1 : 1;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+  if (candidates.length === 0) return null;
+  const topic = candidates[0];
+  const date = /** @type {string} */ (lastByTopic.get(topic.id));
+  return {
+    topic,
+    reason: `Last delivered ${date} — the oldest entry in your record`,
+  };
+}
+
+/**
+ * Renders the Safety Program Pulse into the #program-pulse section:
+ * total/this-month counts, recency line (with an informational cue
+ * past 30 days — no streak or compliance language), the full category
+ * coverage ledger, up to 5 recent deliveries, and the deterministic
+ * suggested-next-topic with a Load button that loads it into the
+ * topic card. Re-computed from the current meetingLog and catalog on
+ * every call. Warns and leaves the section untouched when
+ * #program-pulse is missing from the DOM.
+ * @returns {void}
+ */
+function renderProgramPulse() {
+  const section = document.getElementById("program-pulse");
+  if (!section) {
+    console.warn(
+      "[SafetyTopic] Could not render program pulse: #program-pulse not found in DOM",
+    );
+    return;
+  }
+
+  const stats = computeProgramStats(meetingLog, allTopics);
+  const suggestion = suggestNextTopic(meetingLog, allTopics);
+
+  const days = stats.lastDate ? daysSince(stats.lastDate) : null;
+  const recencyHtml =
+    days === null
+      ? `<p class="pulse-recency">No talks recorded yet</p>`
+      : `<p class="pulse-recency">Last recorded talk: ${days} ${
+          days === 1 ? "day" : "days"
+        } ago (${escHtml(stats.lastDate)})${
+          days > 30
+            ? ` <span class="pulse-recency-cue">(most programs run these weekly or monthly)</span>`
+            : ""
+        }</p>`;
+
+  const deliveredCount = stats.coverage.reduce((sum, c) => sum + c.delivered, 0);
+  const catalogCount = stats.coverage.reduce((sum, c) => sum + c.total, 0);
+
+  const ledgerHtml = stats.coverage
+    .map(
+      (c) => `
+      <li class="pulse-ledger-row${c.delivered === 0 ? " pulse-cat-never" : ""}">
+        <span class="pulse-cat-name">${escHtml(c.category)}</span>
+        <span class="pulse-cat-counts">${c.delivered}/${c.total} delivered</span>
+        <span class="pulse-cat-last">${c.lastDate ? `last: ${escHtml(c.lastDate)}` : "never delivered"}</span>
+      </li>`,
+    )
+    .join("");
+
+  const recentHtml = stats.recent
+    .map(
+      (r) => `
+      <li class="pulse-recent-row">
+        <span class="pulse-recent-title">${escHtml(r.title ?? "(topic no longer in catalog)")}</span>
+        <span class="pulse-recent-date">${escHtml(r.date)}</span>
+      </li>`,
+    )
+    .join("");
+
+  const suggestionHtml = suggestion
+    ? `
+      <div class="pulse-suggestion">
+        <p class="topic-section-label">What's next <span class="pulse-suggestion-scope">(global — ignores your category filter)</span></p>
+        <p class="pulse-suggestion-line">Suggested next: <strong>${escHtml(suggestion.topic.title)}</strong> — ${escHtml(suggestion.reason)}</p>
+        <button id="pulse-load-btn" class="btn btn-primary" type="button">Load this topic</button>
+      </div>`
+    : `<p class="pulse-suggestion-line">No suggestion available.</p>`;
+
+  section.innerHTML = `
+    <div class="pulse-header">
+      <h2 class="pulse-title">Program Pulse</h2>
+      <span class="pulse-total-badge">${stats.total} talk${stats.total === 1 ? "" : "s"} recorded</span>
+    </div>
+    ${
+      stats.total === 0
+        ? `
+        <div class="state-empty">
+          <p>No talks recorded yet — hit 'I Used This' after your next meeting to start building your record.</p>
+        </div>`
+        : `
+        <div class="pulse-stats">
+          <div class="pulse-stat">
+            <span class="pulse-stat-value">${stats.total}</span>
+            <span class="pulse-stat-label">Total talks</span>
+          </div>
+          <div class="pulse-stat">
+            <span class="pulse-stat-value">${stats.thisMonth}</span>
+            <span class="pulse-stat-label">This month</span>
+          </div>
+          <div class="pulse-stat">
+            <span class="pulse-stat-value">${deliveredCount}/${catalogCount}</span>
+            <span class="pulse-stat-label">Topics delivered</span>
+          </div>
+        </div>
+        ${recencyHtml}
+        <p class="topic-section-label">Category coverage</p>
+        <ul class="pulse-ledger">${ledgerHtml}</ul>
+        <p class="topic-section-label">Recent talks</p>
+        <ul class="pulse-recent">${recentHtml}</ul>`
+    }
+    ${suggestionHtml}
+  `;
+
+  const loadBtn = document.getElementById("pulse-load-btn");
+  if (loadBtn && suggestion) {
+    loadBtn.addEventListener("click", () => {
+      if (suggestion.topic) {
+        // Sync the category filter and currentIndex first so the
+        // counter and prev/next buttons match the displayed topic.
+        syncCategoryToTopic(suggestion.topic);
+        showTopic(suggestion.topic, true);
+      }
+    });
   }
 }
 
@@ -981,6 +1330,9 @@ if (typeof window !== 'undefined' && window.__safetyTopic) {
   window.__safetyTopic.buildSignoffSheet = buildSignoffSheet;
   window.__safetyTopic.logTalk = logTalk;
   window.__safetyTopic.getMeetingLog = () => meetingLog.map((e) => ({ ...e }));
+  window.__safetyTopic.computeProgramStats = computeProgramStats;
+  window.__safetyTopic.suggestNextTopic = suggestNextTopic;
+  window.__safetyTopic.renderProgramPulse = renderProgramPulse;
 
   // Seed initial state so pickRandom etc. have a sane starting point
   window.__safetyTopic.reset();

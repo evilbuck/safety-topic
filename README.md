@@ -13,6 +13,7 @@ Click **Get a Topic** and you get a concise, ready-to-read safety brief: a title
 - Browse the full library at [`/browse.html`](https://alivegeek.github.io/safety-topic/browse.html) with keyword search
 - Print a **Sign-Off Sheet** — the brief plus date, presenter, and 12 signature rows with an attestation line, ready to hand around and file
 - Remembers which topics you've used and when each was last delivered (local only) so you don't repeat
+- Shows a **Safety Program Pulse** — talk counts, days since your last recorded talk, per-category coverage, and a suggested next topic — so you can keep the program consistent instead of just picking blind
 
 ## Categories
 

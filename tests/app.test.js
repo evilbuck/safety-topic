@@ -4,6 +4,8 @@
  * State is controlled via window.__safetyTopic.reset() provided by app.js.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'fs';
+import path from 'path';
 
 const sft = global._sft;
 const win = /** @type {Window & typeof globalThis} */ (global.window);
@@ -798,5 +800,566 @@ describe('harness — assertDomElements includes sign-off elements', () => {
     win.logTalk('a');
     sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
     expect(sft.getMeetingLog()).toHaveLength(0);
+  });
+});
+
+// ---------- Program Pulse ----------
+
+/**
+ * Builds a minimal valid Topic for pulse fixtures.
+ * @param {string} id - Topic id.
+ * @param {string} title - Topic title.
+ * @param {string} category - Topic category.
+ * @returns {object} A topic-shaped fixture.
+ */
+function pulseTopic(id, title, category) {
+  return {
+    id,
+    title,
+    category,
+    source: 'OSHA',
+    source_ref: 'ref',
+    duration: '5 min',
+    summary: 'Sum',
+    key_points: [],
+  };
+}
+
+/**
+ * Returns a local ISO date (YYYY-MM-DD) N days before today.
+ * @param {number} n - Days to subtract from today.
+ * @returns {string} ISO date string.
+ */
+function isoDaysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+
+describe('computeProgramStats', () => {
+  const topics = [
+    pulseTopic('t1', 'Topic One', 'Alpha'),
+    pulseTopic('t2', 'Topic Two', 'Alpha'),
+    pulseTopic('t3', 'Topic Three', 'Beta'),
+  ];
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+  });
+
+  it('returns zeroed stats for an empty log', () => {
+    const stats = win.computeProgramStats([], topics);
+    expect(stats.total).toBe(0);
+    expect(stats.thisMonth).toBe(0);
+    expect(stats.lastDate).toBeNull();
+    expect(stats.lastTopicTitle).toBeNull();
+    expect(stats.recent).toEqual([]);
+    expect(stats.coverage.map((c) => c.category).sort()).toEqual(['Alpha', 'Beta']);
+    expect(stats.coverage.every((c) => c.delivered === 0)).toBe(true);
+  });
+
+  it('counts total entries including unknown topic ids', () => {
+    const d1 = isoDaysAgo(1);
+    const d2 = isoDaysAgo(2);
+    const stats = win.computeProgramStats(
+      [{ topicId: 't1', date: d1 }, { topicId: 'ghost', date: d2 }],
+      topics,
+    );
+    expect(stats.total).toBe(2);
+  });
+
+  it('counts thisMonth only for entries in the current calendar month', () => {
+    const stats = win.computeProgramStats(
+      [
+        { topicId: 't1', date: win.todayISO() },
+        { topicId: 't2', date: isoDaysAgo(40) },
+        { topicId: 't3', date: isoDaysAgo(400) },
+      ],
+      topics,
+    );
+    expect(stats.total).toBe(3);
+    expect(stats.thisMonth).toBe(1);
+  });
+
+  it('computes lastDate and lastTopicTitle from the most recent entry', () => {
+    const d10 = isoDaysAgo(10);
+    const d2 = isoDaysAgo(2);
+    const stats = win.computeProgramStats(
+      [
+        { topicId: 't1', date: d10 },
+        { topicId: 't3', date: d2 },
+      ],
+      topics,
+    );
+    expect(stats.lastDate).toBe(d2);
+    expect(stats.lastTopicTitle).toBe('Topic Three');
+  });
+
+  it('returns null lastTopicTitle when the latest entry is an unknown id', () => {
+    const stats = win.computeProgramStats([{ topicId: 'ghost', date: win.todayISO() }], topics);
+    expect(stats.lastDate).toBe(win.todayISO());
+    expect(stats.lastTopicTitle).toBeNull();
+  });
+
+  it('coverage rows carry distinct delivered counts, totals, and latest dates', () => {
+    const d9 = isoDaysAgo(9);
+    const d3 = isoDaysAgo(3);
+    const d5 = isoDaysAgo(5);
+    const stats = win.computeProgramStats(
+      [
+        { topicId: 't1', date: d9 },
+        { topicId: 't1', date: d3 },
+        { topicId: 't3', date: d5 },
+      ],
+      topics,
+    );
+    const alpha = stats.coverage.find((c) => c.category === 'Alpha');
+    const beta = stats.coverage.find((c) => c.category === 'Beta');
+    expect(alpha).toEqual({ category: 'Alpha', delivered: 1, total: 2, lastDate: d3 });
+    expect(beta).toEqual({ category: 'Beta', delivered: 1, total: 1, lastDate: d5 });
+  });
+
+  it('sorts coverage never-delivered first, then oldest last-delivered first', () => {
+    const stats = win.computeProgramStats(
+      [
+        { topicId: 't3', date: isoDaysAgo(30) },
+        { topicId: 't2', date: isoDaysAgo(2) },
+      ],
+      [...topics, pulseTopic('t4', 'Topic Four', 'Gamma')],
+    );
+    expect(stats.coverage.map((c) => c.category)).toEqual(['Gamma', 'Beta', 'Alpha']);
+  });
+
+  it('sorts equally-never-delivered categories alphabetically', () => {
+    const stats = win.computeProgramStats([], [
+      pulseTopic('t9', 'Zebra', 'Zeta'),
+      pulseTopic('t8', 'Yak', 'Alpha'),
+    ]);
+    expect(stats.coverage.map((c) => c.category)).toEqual(['Alpha', 'Zeta']);
+  });
+
+  it('excludes unknown ids from the ledger but keeps them in total/recency', () => {
+    const stats = win.computeProgramStats([{ topicId: 'ghost', date: win.todayISO() }], topics);
+    expect(stats.total).toBe(1);
+    expect(stats.lastDate).toBe(win.todayISO());
+    expect(stats.coverage.every((c) => c.delivered === 0)).toBe(true);
+  });
+
+  it('caps recent at five entries, newest first, with null title for unknown ids', () => {
+    const log = [
+      { topicId: 't1', date: isoDaysAgo(9) },
+      { topicId: 't2', date: isoDaysAgo(8) },
+      { topicId: 't3', date: isoDaysAgo(7) },
+      { topicId: 't1', date: isoDaysAgo(6) },
+      { topicId: 't2', date: isoDaysAgo(5) },
+      { topicId: 'ghost', date: isoDaysAgo(1) },
+    ];
+    const stats = win.computeProgramStats(log, topics);
+    expect(stats.recent).toHaveLength(5);
+    expect(stats.recent[0]).toEqual({ topicId: 'ghost', title: null, date: isoDaysAgo(1) });
+    expect(stats.recent[1].topicId).toBe('t2');
+    expect(stats.recent[1].date).toBe(isoDaysAgo(5));
+    expect(stats.recent[4].topicId).toBe('t2');
+    expect(stats.recent[4].date).toBe(isoDaysAgo(8));
+  });
+
+  it('lists same-day entries newest-appended first and keeps the 6th at recent[0]', () => {
+    const sameDay = win.todayISO();
+    const log = [
+      { topicId: 't1', date: sameDay },
+      { topicId: 't2', date: sameDay },
+      { topicId: 't3', date: sameDay },
+      { topicId: 't1', date: sameDay },
+      { topicId: 't2', date: sameDay },
+      { topicId: 't3', date: sameDay },
+    ];
+    const stats = win.computeProgramStats(log, topics);
+    expect(stats.recent).toHaveLength(5);
+    // Newest-appended wins the date tie: the 6th entry lands first.
+    expect(stats.recent.map((e) => e.topicId)).toEqual(['t3', 't2', 't1', 't3', 't2']);
+    expect(stats.recent.every((e) => e.date === sameDay)).toBe(true);
+  });
+
+  it('does not mutate its inputs', () => {
+    const d9 = isoDaysAgo(9);
+    const d8 = isoDaysAgo(8);
+    const log = [{ topicId: 't1', date: d9 }, { topicId: 'ghost', date: d8 }];
+    const topicsCopy = topics.map((t) => ({ ...t }));
+    win.computeProgramStats(log, topics);
+    expect(log).toEqual([{ topicId: 't1', date: d9 }, { topicId: 'ghost', date: d8 }]);
+    expect(topics).toEqual(topicsCopy);
+  });
+});
+
+describe('suggestNextTopic', () => {
+  const topics = [
+    pulseTopic('a2', 'Alpha Two', 'Beta'),
+    pulseTopic('a1', 'Alpha One', 'Alpha'),
+    pulseTopic('a3', 'Alpha Three', 'Alpha'),
+    pulseTopic('b1', 'Bravo One', 'Beta'),
+  ];
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.reset({ allTopics: [], filteredTopics: [], seenIds: new Set(), usedTopics: {} });
+  });
+
+  it('returns null when there are no topics', () => {
+    expect(win.suggestNextTopic([], [])).toBeNull();
+  });
+
+  it('suggests a never-delivered topic from an uncovered category when log is empty', () => {
+    const { topic, reason } = win.suggestNextTopic([], topics);
+    // Both categories uncovered — alphabetical category tie-break picks
+    // 'Alpha', then alphabetical id tie-break picks 'a1'.
+    expect(topic.id).toBe('a1');
+    expect(reason).toMatch(/never delivered/i);
+  });
+
+  it('prefers the never-delivered topic in the category with the oldest last-delivered date', () => {
+    const { topic } = win.suggestNextTopic(
+      [
+        { topicId: 'a2', date: isoDaysAgo(40) },
+        { topicId: 'a1', date: isoDaysAgo(2) },
+      ],
+      topics,
+    );
+    // a3 (Alpha) is never delivered too, but Beta (40 days) is more
+    // neglected than Alpha (2 days), so its never-delivered b1 wins.
+    expect(topic.id).toBe('b1');
+  });
+
+  it('treats a category with no deliveries as more neglected than any delivered one', () => {
+    const { topic } = win.suggestNextTopic(
+      [{ topicId: 'a1', date: isoDaysAgo(400) }],
+      topics,
+    );
+    // Beta has no deliveries at all; within Beta, alphabetical id: a2.
+    expect(topic.id).toBe('a2');
+  });
+
+  it('tie-breaks within a category alphabetically by id', () => {
+    const { topic } = win.suggestNextTopic([], [
+      pulseTopic('z1', 'Z', 'Same'),
+      pulseTopic('a9', 'A', 'Same'),
+    ]);
+    expect(topic.id).toBe('a9');
+  });
+
+  it('falls back to the globally oldest last-delivered topic when all are delivered', () => {
+    const { topic, reason } = win.suggestNextTopic(
+      [
+        { topicId: 'a1', date: isoDaysAgo(3) },
+        { topicId: 'a2', date: isoDaysAgo(100) },
+        { topicId: 'b1', date: isoDaysAgo(50) },
+        { topicId: 'a3', date: isoDaysAgo(10) },
+      ],
+      topics,
+    );
+    expect(topic.id).toBe('a2');
+    expect(reason).toMatch(/last delivered/i);
+  });
+
+  it('tie-breaks the all-delivered branch alphabetically by id on equal dates', () => {
+    const d = isoDaysAgo(20);
+    const all = [pulseTopic('x2', 'Two', 'Cat'), pulseTopic('x1', 'One', 'Cat')];
+    const { topic } = win.suggestNextTopic(
+      [{ topicId: 'x2', date: d }, { topicId: 'x1', date: d }],
+      all,
+    );
+    expect(topic.id).toBe('x1');
+  });
+
+  it('uses the latest date per topic when a topic was delivered multiple times', () => {
+    const all = [pulseTopic('x1', 'One', 'Cat'), pulseTopic('x2', 'Two', 'Cat')];
+    const { topic } = win.suggestNextTopic(
+      [
+        { topicId: 'x1', date: isoDaysAgo(300) },
+        { topicId: 'x2', date: isoDaysAgo(100) },
+        { topicId: 'x1', date: isoDaysAgo(2) },
+      ],
+      all,
+    );
+    // x1's refresh makes x2 the globally oldest delivery.
+    expect(topic.id).toBe('x2');
+  });
+
+  it('ignores unknown log ids entirely', () => {
+    const { topic } = win.suggestNextTopic([{ topicId: 'ghost', date: isoDaysAgo(1) }], topics);
+    // The ghost entry marks nothing delivered, so the never-delivered
+    // branch applies with every category uncovered → Alpha/a1.
+    expect(topic.id).toBe('a1');
+  });
+
+  it('is deterministic across repeated calls and does not mutate inputs', () => {
+    const d5 = isoDaysAgo(5);
+    const log = [{ topicId: 'a1', date: d5 }];
+    const topicsCopy = topics.map((t) => ({ ...t }));
+    const r1 = win.suggestNextTopic(log, topics);
+    const r2 = win.suggestNextTopic(log, topics);
+    expect(r2).toEqual(r1);
+    expect(log).toEqual([{ topicId: 'a1', date: d5 }]);
+    expect(topics).toEqual(topicsCopy);
+  });
+});
+
+describe('renderProgramPulse', () => {
+  const pulseTopics = [
+    pulseTopic('p1', 'Pulse One', 'Alpha'),
+    pulseTopic('p2', 'Pulse Two', 'Alpha'),
+    pulseTopic('p3', 'Pulse Three', 'Beta'),
+  ];
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: pulseTopics,
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+    });
+  });
+
+  it('renders the empty state and still shows a suggestion when the log is empty', () => {
+    sft.renderProgramPulse();
+    const section = document.getElementById('program-pulse');
+    expect(section.textContent).toMatch(/No talks recorded yet/i);
+    expect(section.textContent).toMatch(/I Used This/);
+    expect(section.textContent).toMatch(/Suggested next/i);
+    expect(document.getElementById('pulse-load-btn')).not.toBeNull();
+  });
+
+  it('renders counts, recency, ledger, and recent list from a seeded log', () => {
+    const d40 = isoDaysAgo(40);
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: pulseTopics,
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'p1', date: d40 }, { topicId: 'p3', date: win.todayISO() }],
+    });
+    sft.renderProgramPulse();
+    const section = document.getElementById('program-pulse');
+    expect(section.textContent).toContain('2 talks recorded');
+    expect(section.textContent).toMatch(/Last recorded talk: 0 days ago/);
+    // Stat blocks: total, this month, coverage
+    const statValues = [...section.querySelectorAll('.pulse-stat-value')]
+      .map((el) => el.textContent);
+    expect(statValues).toEqual(['2', '1', '2/3']);
+    expect(section.textContent).toContain('Topics delivered');
+    // Ledger sorted: Alpha (40 days ago, older) before Beta (today)
+    const cats = [...section.querySelectorAll('.pulse-ledger-row .pulse-cat-name')]
+      .map((el) => el.textContent);
+    expect(cats).toEqual(['Alpha', 'Beta']);
+    // Recent list newest-first
+    const recentTitles = [...section.querySelectorAll('.pulse-recent-row .pulse-recent-title')]
+      .map((el) => el.textContent);
+    expect(recentTitles).toEqual(['Pulse Three', 'Pulse One']);
+  });
+
+  it('shows the informational recency cue only past 30 days', () => {
+    const render = (date) => {
+      sft.reset({
+        allTopics: pulseTopics,
+        filteredTopics: pulseTopics,
+        currentIndex: 0,
+        seenIds: new Set(),
+        usedTopics: {},
+        meetingLog: [{ topicId: 'p1', date }],
+      });
+      sft.renderProgramPulse();
+      return document.getElementById('program-pulse').textContent;
+    };
+    expect(render(isoDaysAgo(10))).not.toMatch(/weekly or monthly/);
+    expect(render(isoDaysAgo(30))).not.toMatch(/weekly or monthly/);
+    expect(render(isoDaysAgo(31))).toMatch(/weekly or monthly/);
+    expect(render(isoDaysAgo(40))).toMatch(/weekly or monthly/);
+  });
+
+  it('falls back to the catalog-removed title for unknown ids in the recent list', () => {
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: pulseTopics,
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'ghost', date: win.todayISO() }],
+    });
+    sft.renderProgramPulse();
+    const section = document.getElementById('program-pulse');
+    expect(section.textContent).toContain('(topic no longer in catalog)');
+    expect(section.textContent).toContain('1 talk recorded');
+  });
+
+  it('Load button loads the suggested topic with hash sync', () => {
+    const d5 = isoDaysAgo(5);
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: pulseTopics,
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'p1', date: d5 }],
+    });
+    sft.renderProgramPulse();
+    // Beta has no deliveries → more neglected than Alpha → p3 suggested
+    expect(document.getElementById('program-pulse').textContent).toContain('Pulse Three');
+    document.getElementById('pulse-load-btn').click();
+    expect(document.getElementById('topic-card').textContent).toContain('Pulse Three');
+    expect(win.location.hash).toBe('#p3');
+  });
+
+  it('Load button clears a stale category filter so counter and nav match the loaded topic', () => {
+    const d5 = isoDaysAgo(5);
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: [pulseTopics[0], pulseTopics[1]], // Alpha filter active
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'p1', date: d5 }],
+    });
+    sft.buildCategoryDropdown();
+    sft.getCategorySelect().value = 'Alpha';
+    sft.renderProgramPulse();
+    document.getElementById('pulse-load-btn').click();
+    const counter = document.querySelector('.topic-counter');
+    expect(counter.textContent).toBe('3 / 3');
+    expect(win.location.hash).toBe('#p3');
+    // Navigation steps from the loaded topic in the rebuilt (unfiltered) list.
+    document.getElementById('nav-prev').click();
+    expect(win.location.hash).toBe('#p2');
+    expect(document.querySelector('.topic-counter').textContent).toBe('2 / 3');
+    expect(document.getElementById('nav-next').disabled).toBe(false);
+  });
+
+  it('Load button with no filter fixes the stale index so prev no-ops only at index 0', () => {
+    const d5 = isoDaysAgo(5);
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: pulseTopics,
+      currentIndex: 0, // stale: the loaded topic sits at index 2
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [{ topicId: 'p1', date: d5 }],
+    });
+    sft.renderProgramPulse();
+    document.getElementById('pulse-load-btn').click();
+    expect(win.location.hash).toBe('#p3');
+    expect(document.querySelector('.topic-counter').textContent).toBe('3 / 3');
+    // ← from the loaded topic navigates (index was corrected from 0 to 2)…
+    document.getElementById('nav-prev').click();
+    expect(win.location.hash).toBe('#p2');
+    document.getElementById('nav-prev').click();
+    expect(win.location.hash).toBe('#p1');
+    // …and no-ops only at index 0.
+    expect(document.getElementById('nav-prev').disabled).toBe(true);
+  });
+
+  it('renders without console errors for logs with unknown ids', () => {
+    const errors = [];
+    const spy = vi.spyOn(win.console, 'error').mockImplementation((m) => errors.push(m));
+    sft.reset({
+      allTopics: pulseTopics,
+      filteredTopics: pulseTopics,
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: [
+        { topicId: 'p1', date: isoDaysAgo(3) },
+        { topicId: 'ghost', date: win.todayISO() },
+      ],
+    });
+    sft.renderProgramPulse();
+    spy.mockRestore();
+    expect(errors).toHaveLength(0);
+  });
+});
+
+describe('program pulse wiring', () => {
+  const topic = pulseTopic('w1', 'Wired Topic', 'Alpha');
+
+  beforeEach(() => {
+    win.localStorage.clear();
+    sft.resetDomRefs();
+    sft.callInit();
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+    });
+  });
+
+  afterEach(() => {
+    win.history.replaceState(null, '', ' ');
+  });
+
+  it('assertDomElements requires #program-pulse', () => {
+    const orig = win.document.getElementById.bind(win.document);
+    win.document.getElementById = /** @type {any} */ ((id) => {
+      if (id === 'program-pulse') return null;
+      return orig(id);
+    });
+    expect(() => win.assertDomElements()).toThrow(/program-pulse.*not found/i);
+    win.document.getElementById = /** @type {any} */ (orig);
+  });
+
+  it('re-renders the pulse when I Used This is clicked', () => {
+    sft.renderProgramPulse();
+    expect(document.getElementById('program-pulse').textContent).toMatch(/No talks recorded yet/i);
+    sft.showTopic(topic, false);
+    document.getElementById('use-this-btn').click();
+    const pulse = document.getElementById('program-pulse');
+    expect(pulse.textContent).toContain('1 talk recorded');
+    expect(pulse.textContent).toContain('Wired Topic');
+    expect(pulse.querySelector('.state-empty')).toBeNull();
+  });
+
+  it('renders the pulse from a restored localStorage meetingLog without re-running init()', () => {
+    win.localStorage.setItem(
+      'meetingLog',
+      JSON.stringify([{ topicId: 'w1', date: win.todayISO() }]),
+    );
+    // Restore state directly instead of calling win.init() again:
+    // beforeEach already ran callInit(), and a second init() stacks
+    // duplicate anonymous event listeners on the wired buttons.
+    sft.reset({
+      allTopics: [topic],
+      filteredTopics: [topic],
+      currentIndex: 0,
+      seenIds: new Set(),
+      usedTopics: {},
+      meetingLog: JSON.parse(win.localStorage.getItem('meetingLog')),
+    });
+    sft.renderProgramPulse();
+    const pulse = document.getElementById('program-pulse');
+    expect(pulse.textContent).toContain('1 talk recorded');
+    expect(pulse.textContent).toContain('Wired Topic');
+  });
+});
+
+describe('print — program pulse hidden', () => {
+  const printBlock = () => {
+    const css = fs.readFileSync(path.resolve('./style.css'), 'utf8');
+    const idx = css.indexOf('@media print');
+    expect(idx).toBeGreaterThan(-1);
+    return css.slice(idx);
+  };
+
+  it('hides #program-pulse inside the @media print block', () => {
+    expect(printBlock()).toMatch(/#program-pulse\s*\{[^}]*display:\s*none/);
+  });
+
+  it('keeps the sign-off sheet print rules intact', () => {
+    expect(printBlock()).toMatch(/body\.sheet-open \.signoff-sheet\s*\{[^}]*display:\s*block/);
   });
 });

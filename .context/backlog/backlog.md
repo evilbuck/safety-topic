@@ -1,0 +1,1 @@
+- **browse.html per-topic delivery status** — show each topic's last-delivered date (and a never-delivered marker) on the Browse page, reusing `computeProgramStats`; deferred from the 2026-11-24 safety-program-pulse loop (out of scope there)

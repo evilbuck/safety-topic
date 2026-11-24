@@ -666,6 +666,165 @@ body.sheet-open .signoff-sheet {
   margin-top: 14px;
 }
 
+/* ---------- Program Pulse ---------- */
+.program-pulse {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: 28px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Never render as a blank padded card when init() fails early. */
+.program-pulse:empty {
+  display: none;
+}
+
+.pulse-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pulse-title {
+  margin: 0;
+  font-size: 1.3rem;
+  letter-spacing: -0.02em;
+}
+
+.pulse-total-badge {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-accent-dark);
+  background: var(--color-accent-light);
+  padding: 4px 12px;
+  border-radius: 100px;
+}
+
+.pulse-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pulse-stat {
+  flex: 1;
+  min-width: 120px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pulse-stat-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pulse-stat-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.pulse-recency {
+  margin: 0;
+  font-size: 0.92rem;
+  color: var(--color-text);
+}
+
+.pulse-recency-cue {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.pulse-ledger,
+.pulse-recent {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pulse-ledger-row,
+.pulse-recent-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 0.9rem;
+  padding: 6px 10px;
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+}
+
+.pulse-ledger-row.pulse-cat-never {
+  background: var(--color-orange-light);
+}
+
+.pulse-cat-name,
+.pulse-recent-title {
+  flex: 1;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.pulse-cat-counts,
+.pulse-cat-last,
+.pulse-recent-date {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pulse-cat-never .pulse-cat-last {
+  color: #8a3f00;
+  font-weight: 600;
+}
+
+.pulse-suggestion {
+  background: var(--color-accent-light);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.pulse-suggestion .topic-section-label {
+  margin-bottom: 0;
+}
+
+.pulse-suggestion-scope {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 500;
+}
+
+.pulse-suggestion-line {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.pulse-suggestion-line strong {
+  color: var(--color-accent-dark);
+}
+
 /* ---------- Print Styles ---------- */
 @media print {
   body { background: #fff; font-size: 11pt; }
@@ -725,6 +884,9 @@ body.sheet-open .signoff-sheet {
   .badge-niosh  { border: 1px solid #1a7a4a; }
 
   .toast { display: none; }
+
+  /* Dashboard is screen-only; print outputs the talk card / sign-off sheet. */
+  #program-pulse { display: none !important; }
 
   /* Sign-off sheet print mode: sheet only, one page */
   body.sheet-open .site-header,

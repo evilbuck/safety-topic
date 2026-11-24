@@ -8,10 +8,15 @@ All notable bug fixes and improvements.
 
 - **Printable Sign-Off Sheet** — new share-bar button prints a one-page Safety Talk Record: the topic brief plus date, presenter/location/company fill-in lines, an attestation line, 12 attendance signature rows, notes/follow-up space, and a presenter sign-off line — the fields conventional toolbox-talk records use.
 - **Dated meeting log** — "I Used This" now also records a dated entry in localStorage (`meetingLog`), and the topic card shows "Last delivered: <date>". Used-count labels and the "Not used yet" filter are unchanged.
-- **29 new Vitest tests** (63 total) covering the sign-off sheet content, meeting log persistence, print flow, last-delivered display, and defensive restore paths.
+- **Safety Program Pulse** — new main-page dashboard that reads your recorded talk log: total and this-month talk counts, days since your last recorded talk (with a gentle informational cue past 30 days), a per-category delivered-vs-never coverage ledger (never-delivered categories first), a recent-deliveries list, and a deterministic "suggested next topic" (never-delivered first, most-neglected category) with a one-click Load button. Hidden from print output, like all app chrome.
+- **35 new Vitest tests** (98 total) covering the pulse computations, suggestion determinism, rendering, and live-update paths.
 
 ### Fixed
 
+- **Suggested-topic Load button desynced navigation state** — loading a suggestion now syncs the category filter and topic index, so the position counter and prev/next buttons always match the displayed card.
+- **Same-day talks listed oldest-first in Recent Talks** — equal-date entries now order newest-first, and a sixth same-day talk appears instead of being dropped.
+- **Program Pulse rendered as a blank padded card when topic data failed to load** — the section now hides when empty, and the never-delivered badge color meets WCAG AA contrast.
+- **Mangled `assertDomElements` error message** — the thrown text embedded literal `\" + \" fragments; now a single clean sentence.
 - **`init()` silently swallowed localStorage restore errors** — the `seenTopics`/`usedTopics` restores (and the `topicFilter` restore in `restoreFilterState()`) used `catch (_) {}`, contradicting the defensive-coding rule; all restores now warn instead of swallowing.
 
 ## [1.1.0] - 2026-04-16
